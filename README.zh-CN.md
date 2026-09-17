@@ -101,28 +101,6 @@ dsh plugin --profile web remove dsh-lark-session-monitor
 
 **轮询。** 同一监听同时只跑一轮。单条 prompt 最多 **10 条消息**，其余在本次投递后继续。游标只在投递成功后推进，因此投递失败会重读该批消息。
 
-**目标被删除。** 会话被删除时，会在该监听的工作区内新建一个。而任何工作区都未声明过的 sessionId 会被报为配置错误，而不是替换。
-
-## 设置项
-
-| 设置 | 默认值 | 含义 |
-| --- | --- | --- |
-| **App ID** / **App Secret** | — | 保存时 Secret 留空表示保持不变 |
-| **轮询间隔（秒）** | `30` | 最小 10 秒 |
-| **Prompt** | — | 每个监听各自持有，投递时使用 |
-
-存放于 `$DSH_HOME/plugin-data/dsh-lark-session-monitor/settings.json`，原子写入，权限 `0600`（含 App Secret）。
-
-可选配置，写在 profile 的 `cordis.patch.yml`：
-
-```yaml
-- id: lark-session-monitor
-  config:
-    rpcAuthority: trusted-host   # 或 loopback
-    autoStart: true              # Host 启动即开始轮询
-    maxChats: 500                # 选择列表返回的会话上限
-```
-
 ## 隐私
 
 - 仅读取你配置的会话，以及轮询窗口内的消息。
@@ -135,24 +113,6 @@ dsh plugin --profile web remove dsh-lark-session-monitor
 
 - **仅文本。** 图片、文件、音视频以类型标签投递。
 - **轮询而非推送。** 投递延迟受轮询间隔约束；离线期间的消息不会被补推（超出首次读取窗口的部分）。
-- **仅支持飞书（Lark）。**
-
-## 开发
-
-```bash
-npm install
-npm run check     # 构建两端，然后运行测试
-```
-
-`lib/index.js`（Host）与 `lib/client.js`（浏览器）均已提交——git 安装不会执行构建，因此**改动 `src/` 后必须重新构建并提交 `lib/`**，CI 会在两者不一致时失败。
-
-迭代时可把 checkout 链接进正在使用的 profile：
-
-```bash
-dsh plugin --profile web add /absolute/path/to/this/checkout
-```
-
-改动 Host 端后需重启 Host；仅改浏览器端刷新页面即可。
 
 ## 许可证
 

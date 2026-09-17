@@ -100,27 +100,6 @@ New messages are delivered as one prompt:
 
 **Polling.** Polls are single-flight per monitor. At most **10 messages** per prompt; the remainder follows after that delivery. The cursor advances only after a successful delivery, so a failed delivery re-reads its messages.
 
-**Deleted targets.** A deleted session is replaced in the monitor's workspace. An id no workspace ever declared is reported as a misconfiguration instead of replaced.
-
-## Settings
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| **App ID** / **App Secret** | — | An empty secret on save keeps the stored one |
-| **轮询间隔（秒）** | `30` | Minimum 10 seconds |
-| **Prompt** | — | Per monitor; used at delivery |
-
-Stored at `$DSH_HOME/plugin-data/dsh-lark-session-monitor/settings.json`, written atomically with `0600` (it holds the app secret).
-
-Optional config in the profile's `cordis.patch.yml`:
-
-```yaml
-- id: lark-session-monitor
-  config:
-    rpcAuthority: trusted-host   # or loopback
-    autoStart: true              # poll from Host start
-    maxChats: 500                # conversations returned to the picker
-```
 
 ## Privacy
 
@@ -134,24 +113,6 @@ Optional config in the profile's `cordis.patch.yml`:
 
 - **Text only.** Images, files and media are delivered as type labels.
 - **Polling, not push.** Delivery is bounded by the poll interval; offline messages are not back-filled beyond the initial window.
-- **Feishu (Lark) only.**
-
-## Development
-
-```bash
-npm install
-npm run check     # build both halves, then run the tests
-```
-
-Both `lib/index.js` (Host) and `lib/client.js` (browser) are committed — a git install runs no build step, so **rebuild and commit `lib/` with any `src/` change**. CI fails when they disagree.
-
-Link a checkout into a live profile while iterating:
-
-```bash
-dsh plugin --profile web add /absolute/path/to/this/checkout
-```
-
-Restart the Host after a Host-half change; a browser-half change needs only a page refresh.
 
 ## License
 
