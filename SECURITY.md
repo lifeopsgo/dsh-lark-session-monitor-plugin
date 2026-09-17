@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security issues **privately**, through GitHub's
-[Security Advisories](https://github.com/REPLACE_OWNER/dsh-lark-session-monitor/security/advisories/new)
+[Security Advisories](https://github.com/lifeopsgo/dsh-lark-session-monitor/security/advisories/new)
 rather than a public issue.
 
 Include what you can: the DSH version, the plugin version, a description of the
