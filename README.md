@@ -6,7 +6,7 @@
 
 **English** · [简体中文](./README.zh-CN.md)
 
-<img alt="The 飞书会话监听 settings page" src="./docs/setting-page.jpeg" width="820">
+<img alt="The 飞书会话监听 settings page" src="./docs/setting-page.png" width="620">
 
 </div>
 
@@ -14,18 +14,12 @@
 
 A **DeepSeek Harness (DSH)** plugin that reads Feishu conversations with **your own user identity** and delivers new messages as prompts into a DSH session you choose.
 
-Feishu has no user-identity push channel, so it polls.
-
 ## Compatible DSH versions
 
 | DSH version | Status |
 | --- | --- |
 | 0.1.5-rc.1 | **verified** — run in a live Web profile, including a real browser authorization |
 | 0.1.5-rc.2 / 0.1.6-alpha.x | expected to work; every DSH surface this plugin uses is unchanged across that range |
-
-`peerDependencies` admit the `0.1.x` prerelease line and reject `0.2.0` and later.
-
-> npm's `latest` tag for `@deepseek-ai/dsh-*` still points at a stale `0.0.1-rc.1`. Install DSH from `next` or `alpha`.
 
 ## Quick start
 

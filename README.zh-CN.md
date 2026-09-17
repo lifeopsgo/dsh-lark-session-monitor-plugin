@@ -6,7 +6,7 @@
 
 [English](./README.md) · **简体中文**
 
-<img alt="「飞书会话监听」设置页" src="./docs/setting-page.jpeg" width="820">
+<img alt="「飞书会话监听」设置页" src="./docs/setting-page.png" width="620">
 
 </div>
 
@@ -14,7 +14,6 @@
 
 一个 **DeepSeek Harness (DSH)** 插件，以**你本人的用户身份**读取飞书会话，把新消息作为 prompt 投递到你指定的 DSH 会话。
 
-飞书没有用户身份的推送通道，因此采用轮询。
 
 ## 兼容的 DSH 版本
 
@@ -22,10 +21,6 @@
 | --- | --- |
 | 0.1.5-rc.1 | **已实测** — 在真实 Web profile 中运行，含浏览器端的真实授权 |
 | 0.1.5-rc.2 / 0.1.6-alpha.x | 预期可用；本插件使用的 DSH 接口在该区间内未变化 |
-
-`peerDependencies` 接受 `0.1.x` 预发布线，拒绝 `0.2.0` 及以后版本。
-
-> `@deepseek-ai/dsh-*` 在 npm 上的 `latest` 标签仍指向过期的 `0.0.1-rc.1`，请从 `next` 或 `alpha` 安装 DSH。
 
 ## 快速开始
 
