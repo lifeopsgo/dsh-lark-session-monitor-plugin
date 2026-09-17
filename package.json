@@ -1,0 +1,95 @@
+{
+  "name": "dsh-lark-session-monitor",
+  "version": "0.1.0",
+  "description": "DSH plugin that watches Feishu (Lark) conversations with your own user identity and forwards new messages into a DeepSeek Harness session.",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "lark",
+    "feishu",
+    "im",
+    "session",
+    "monitor"
+  ],
+  "homepage": "https://github.com/REPLACE_OWNER/dsh-lark-session-monitor#readme",
+  "bugs": {
+    "url": "https://github.com/REPLACE_OWNER/dsh-lark-session-monitor/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/REPLACE_OWNER/dsh-lark-session-monitor.git"
+  },
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "scripts",
+    "cordis.patch.yml",
+    "LICENSE",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "npm run build && npm test"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-api-gateway": ">=0.1.2-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-connection": ">=0.1.2-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-locale": ">=0.1.2-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-runtime": ">=0.1.2-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.1.2-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.2-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-credentials": ">=0.1.2-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-session": ">=0.1.2-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-session-query": ">=0.1.2-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-session-title": ">=0.1.2-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-workspace": ">=0.1.2-rc.1 <0.2.0-0",
+    "react": "^18.3.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-api-gateway": { "optional": true },
+    "@deepseek-ai/dsh-client-connection": { "optional": true },
+    "@deepseek-ai/dsh-client-locale": { "optional": true },
+    "@deepseek-ai/dsh-client-runtime": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-settings": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-slots": { "optional": true },
+    "@deepseek-ai/dsh-credentials": { "optional": true },
+    "@deepseek-ai/dsh-session": { "optional": true },
+    "@deepseek-ai/dsh-session-query": { "optional": true },
+    "@deepseek-ai/dsh-session-title": { "optional": true },
+    "@deepseek-ai/dsh-workspace": { "optional": true },
+    "react": { "optional": true }
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
+  }
+}

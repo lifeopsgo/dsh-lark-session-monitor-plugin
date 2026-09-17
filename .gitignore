@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output.
+#
+# NOTE: lib/ is deliberately NOT ignored. This plugin is installed straight
+# from a git tag (`dsh plugin --profile <p> add github:OWNER/dsh-lark-session-monitor#vX.Y.Z`),
+# and a git-hosted install runs no build step unless the package declares a
+# `prepare` script AND the user allowlists it by hash in their profile's
+# pnpm-workspace.yaml. Shipping the built lib/ in the tag keeps installation
+# to one command with no allowBuilds entry, the way other published DSH
+# plugins do it. Source maps stay out to keep the repo small.
+lib/*.js.map
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS cruft
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# Env / secrets
+#
+# The plugin writes its settings (including the Feishu App Secret) to
+# $DSH_HOME/plugin-data/, never into the checkout. These rules are for the
+# case where someone copies one in while debugging.
+.env
+.env.*
+!.env.example
+settings.json
+plugin-data/
+
+# Local scratch
+CR.txt
+*.local
+tmp/
+.temp/
+.cache/
+
+# Test / coverage artifacts
+coverage/
+.nyc_output/

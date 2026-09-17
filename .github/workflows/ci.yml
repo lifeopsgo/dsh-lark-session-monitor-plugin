@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The built output is committed, so a build that changes it means the
+      # tag would ship a bundle that does not match the sources it came from.
+      - name: Verify lib/ matches the sources
+        run: |
+          if ! git diff --quiet -- lib; then
+            echo "::error::lib/ is out of date with src/. Run 'npm run build' and commit the result."
+            git --no-pager diff --stat -- lib
+            exit 1
+          fi
