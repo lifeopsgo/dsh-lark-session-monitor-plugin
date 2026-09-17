@@ -10,7 +10,7 @@
  * deliver: a monitor must never interrupt a turn that is already running in
  * the target session.
  *
- * @module dsh-lark-session-monitor/deliver
+ * @module dsh-lark-session-monitor-plugin/deliver
  */
 
 import { composePrompt } from './normalize.mjs';

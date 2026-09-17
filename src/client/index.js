@@ -1,11 +1,11 @@
 /**
- * Browser half of dsh-lark-session-monitor.
+ * Browser half of dsh-lark-session-monitor-plugin.
  *
  * Registers one page in the Plugins settings section. All data arrives over
  * the plugin's own RPC endpoint; this half holds no durable state beyond the
  * form and the last snapshot it loaded.
  *
- * @module dsh-lark-session-monitor/client
+ * @module dsh-lark-session-monitor-plugin/client
  */
 
 import * as React from 'react';
@@ -13,7 +13,7 @@ import * as React from 'react';
 import { callSettingsRpc } from '../rpc-client.mjs';
 import { mergeChats, mergeSettings, mergeTargets } from './snapshot.mjs';
 
-export const name = 'dsh-lark-session-monitor';
+export const name = 'dsh-lark-session-monitor-plugin';
 
 /** Services the page reads. `connection` carries the RPC. */
 export const inject = ['slots', 'connection'];
@@ -48,7 +48,7 @@ function unwrap(result, method) {
 }
 
 function installStyles() {
-  const id = 'dsh-lark-session-monitor-styles';
+  const id = 'dsh-lark-session-monitor-plugin-styles';
   if (document.getElementById(id)) return () => {};
   const style = document.createElement('style');
   style.id = id;
@@ -730,7 +730,7 @@ export function LarkMonitorPage({ rpcCall }) {
 }
 
 export function apply(ctx) {
-  ctx.effect(() => installStyles(), 'dsh-lark-session-monitor: styles');
+  ctx.effect(() => installStyles(), 'dsh-lark-session-monitor-plugin: styles');
 
   ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
     name: 'settings.plugins.tab',

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve `dsh-lark-session-monitor`.
+Thanks for helping improve `dsh-lark-session-monitor-plugin`.
 
 ## Development setup
 

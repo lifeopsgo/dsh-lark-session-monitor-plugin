@@ -46,7 +46,7 @@ async function reopen(file) {
 
 test('the settings path lives under DSH_HOME/plugin-data', () => {
   const path = settingsPath({ DSH_HOME: '/tmp/fake-home' });
-  assert.equal(path, '/tmp/fake-home/plugin-data/dsh-lark-session-monitor/settings.json');
+  assert.equal(path, '/tmp/fake-home/plugin-data/dsh-lark-session-monitor-plugin/settings.json');
 });
 
 test('generated monitor ids match the declared pattern', () => {

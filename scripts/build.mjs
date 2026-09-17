@@ -6,7 +6,7 @@
  * `lib/client.js` — the path `package.json#exports["./client"]` points at.
  * React stays external because the shell provides it.
  *
- * @module dsh-lark-session-monitor/build
+ * @module dsh-lark-session-monitor-plugin/build
  */
 
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -18,7 +18,7 @@ import { build } from 'esbuild';
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(sourceDirectory, '..');
 const outputPath = resolve(packageRoot, 'lib/client.js');
-const loaderId = process.env.LSM_CLIENT_ID ?? 'dsh-lark-session-monitor';
+const loaderId = process.env.LSM_CLIENT_ID ?? 'dsh-lark-session-monitor-plugin';
 
 const result = await build({
   entryPoints: [resolve(packageRoot, 'src/client/index.js')],

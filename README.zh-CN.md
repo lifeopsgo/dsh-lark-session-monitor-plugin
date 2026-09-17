@@ -1,6 +1,6 @@
 <div align="center">
 
-# dsh-lark-session-monitor
+# dsh-lark-session-monitor-plugin
 
 **以你本人的身份监听飞书（Lark）会话，把新消息投递到指定的 DeepSeek Harness 会话。**
 
@@ -37,7 +37,7 @@ dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v0
 
 ```bash
 dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v0.1.0
-dsh plugin --profile web remove dsh-lark-session-monitor
+dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 ```
 
 </details>

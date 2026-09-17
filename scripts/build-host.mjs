@@ -7,7 +7,7 @@
  * dependencies (currently only Schemastery) keeps the installed plugin
  * self-contained regardless of how the profile hoists `node_modules`.
  *
- * @module dsh-lark-session-monitor/build-host
+ * @module dsh-lark-session-monitor-plugin/build-host
  */
 
 import { mkdir } from 'node:fs/promises';

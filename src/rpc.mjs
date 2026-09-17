@@ -7,7 +7,7 @@
  * envelope, and JSON error mapping. Business logic lives in the feature
  * modules and is reached through the handler this factory receives.
  *
- * @module dsh-lark-session-monitor/rpc
+ * @module dsh-lark-session-monitor-plugin/rpc
  */
 
 export const RPC_CHANNEL = '/lark-session-monitor';

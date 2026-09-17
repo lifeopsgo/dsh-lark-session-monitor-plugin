@@ -7,7 +7,7 @@
  * `modifyRecord` is a serialized read-modify-write, which is what makes a
  * refresh safe when a poll and a manual action overlap.
  *
- * @module dsh-lark-session-monitor/auth
+ * @module dsh-lark-session-monitor-plugin/auth
  */
 
 import {

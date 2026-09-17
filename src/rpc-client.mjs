@@ -1,12 +1,12 @@
 /**
  * Browser-side transport for the settings endpoint.
  *
- * Mirrors the Host's registration ({@link module:dsh-lark-session-monitor/rpc})
+ * Mirrors the Host's registration ({@link module:dsh-lark-session-monitor-plugin/rpc})
  * so both halves agree on the endpoint path. The browser reaches it through
  * DSH's public Connection RPC carrier, which applies the Host's own browser
  * authentication before the handler runs.
  *
- * @module dsh-lark-session-monitor/rpc-client
+ * @module dsh-lark-session-monitor-plugin/rpc-client
  */
 
 /** Must match `RPC_CHANNEL` in the Host half. */

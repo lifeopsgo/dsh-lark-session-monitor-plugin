@@ -11,7 +11,7 @@
  * the settings page looked fine until a restart. A plain file has no such
  * contract to get wrong.
  *
- * @module dsh-lark-session-monitor/store
+ * @module dsh-lark-session-monitor-plugin/store
  */
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -135,7 +135,7 @@ export const SETTINGS_FILE_NAME = 'settings.json';
 /** `$DSH_HOME/plugin-data/<plugin>/settings.json`, matching other plugins. */
 export function settingsPath(env = process.env) {
   const root = env.DSH_HOME || join(homedir(), '.dsh');
-  return join(root, 'plugin-data', 'dsh-lark-session-monitor', SETTINGS_FILE_NAME);
+  return join(root, 'plugin-data', 'dsh-lark-session-monitor-plugin', SETTINGS_FILE_NAME);
 }
 
 /**

@@ -7,7 +7,7 @@
  * Feishu's envelope (`code !== 0` is an error even on HTTP 200 — a detail that
  * silently corrupts a poll loop when missed).
  *
- * @module dsh-lark-session-monitor/lark-api
+ * @module dsh-lark-session-monitor-plugin/lark-api
  */
 
 import { apiHost } from './oauth.mjs';

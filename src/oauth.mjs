@@ -13,7 +13,7 @@
  * user_access_token endpoint is used; the app's own tenant token cannot read
  * the conversation we care about.
  *
- * @module dsh-lark-session-monitor/oauth
+ * @module dsh-lark-session-monitor-plugin/oauth
  */
 
 import { randomUUID } from 'node:crypto';
@@ -211,7 +211,7 @@ export async function refreshUserToken(options) {
 
 /** Stable key under which one app's user grant is stored. */
 /** Scope segment: this plugin's name, which the credentials service uses as the owner. */
-const CREDENTIAL_SCOPE = 'dsh-lark-session-monitor';
+const CREDENTIAL_SCOPE = 'dsh-lark-session-monitor-plugin';
 
 /**
  * Both halves of a credential key must match the credentials service's segment

@@ -11,7 +11,7 @@
  * This module is the single source of truth for that inventory, so delivery
  * and the settings picker cannot disagree about which workspaces exist.
  *
- * @module dsh-lark-session-monitor/inventory
+ * @module dsh-lark-session-monitor-plugin/inventory
  */
 
 function isRecord(value) {

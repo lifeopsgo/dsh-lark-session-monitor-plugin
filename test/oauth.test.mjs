@@ -162,7 +162,7 @@ test('credential keys satisfy the credentials service <scope>/<id> grammar', () 
 });
 
 test('a real Feishu app id maps to a stable, readable key', () => {
-  assert.equal(credentialKeyFor('cli_abc123def456'), 'dsh-lark-session-monitor/cli-abc123def456');
+  assert.equal(credentialKeyFor('cli_abc123def456'), 'dsh-lark-session-monitor-plugin/cli-abc123def456');
 });
 
 test('the requested scopes cover p2p, group and refresh', () => {

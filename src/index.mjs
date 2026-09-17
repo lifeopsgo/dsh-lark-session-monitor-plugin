@@ -1,5 +1,5 @@
 /**
- * dsh-lark-session-monitor, Host half.
+ * dsh-lark-session-monitor-plugin, Host half.
  *
  * Watches Feishu conversations with the signed-in user's own identity and
  * forwards new messages into a DeepSeek Harness session as a prompt.
@@ -13,7 +13,7 @@
  * document, the poll timer, and prompt delivery. The browser half only
  * renders what this half reports.
  *
- * @module dsh-lark-session-monitor
+ * @module dsh-lark-session-monitor-plugin
  */
 
 import { Authorizer } from './auth.mjs';
@@ -24,7 +24,7 @@ import { MonitorRuntime } from './runtime.mjs';
 import { registerSettingsRpc } from './rpc.mjs';
 import { MonitorStore, publicSettings } from './store.mjs';
 
-export const name = 'dsh-lark-session-monitor';
+export const name = 'dsh-lark-session-monitor-plugin';
 
 /**
  * Services this plugin requires before `apply` runs.
@@ -327,7 +327,7 @@ export function apply(ctx, config) {
       return endpoint[method](payload, signal);
     }, { authority: settings.rpcAuthority });
     return () => dispose?.();
-  }, 'dsh-lark-session-monitor: settings endpoint');
+  }, 'dsh-lark-session-monitor-plugin: settings endpoint');
 
   /**
    * Log what the workspace read actually returns.
@@ -379,7 +379,7 @@ export function apply(ctx, config) {
       disposed = true;
       stop();
     };
-  }, 'dsh-lark-session-monitor: runtime lifecycle');
+  }, 'dsh-lark-session-monitor-plugin: runtime lifecycle');
 }
 
 export { MonitorStore, publicSettings };

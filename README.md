@@ -1,6 +1,6 @@
 <div align="center">
 
-# dsh-lark-session-monitor
+# dsh-lark-session-monitor-plugin
 
 **Watch Feishu (Lark) conversations as yourself, and forward new messages into a DeepSeek Harness session.**
 
@@ -36,7 +36,7 @@ Restart DSH, then refresh the page. Open **Settings → Plugins → 飞书会话
 
 ```bash
 dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v0.1.0
-dsh plugin --profile web remove dsh-lark-session-monitor
+dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 ```
 
 </details>

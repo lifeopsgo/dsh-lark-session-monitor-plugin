@@ -48,7 +48,7 @@ function fakeContext(services = {}) {
 const baseConfig = { rpcAuthority: 'trusted-host', autoStart: false, maxChats: 500 };
 
 test('the bundle exposes the plugin contract', () => {
-  assert.equal(name, 'dsh-lark-session-monitor');
+  assert.equal(name, 'dsh-lark-session-monitor-plugin');
   assert.equal(typeof apply, 'function');
 });
 

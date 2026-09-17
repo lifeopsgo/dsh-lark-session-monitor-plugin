@@ -16,7 +16,7 @@ This plugin holds two secrets, and both stay on the Host:
 
 | Secret | Where it lives | Notes |
 | --- | --- | --- |
-| Feishu **App Secret** | `$DSH_HOME/plugin-data/dsh-lark-session-monitor/settings.json` | Written atomically with `0600`. Never returned over RPC — the settings response carries only a `hasSecret` boolean. |
+| Feishu **App Secret** | `$DSH_HOME/plugin-data/dsh-lark-session-monitor-plugin/settings.json` | Written atomically with `0600`. Never returned over RPC — the settings response carries only a `hasSecret` boolean. |
 | Feishu **user access token** and its refresh token | DSH's `credentials` service | Read and rotated through `modifyRecord`, which serializes the read-modify-write so concurrent refreshes cannot lose a rotation. |
 
 The browser half never receives either value. If you find a path where one

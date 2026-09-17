@@ -8,7 +8,7 @@
  * `{"title":null,"elements":[...]}` learns nothing and the monitor looks
  * broken. Anything we cannot render as readable text is described in words.
  *
- * @module dsh-lark-session-monitor/normalize
+ * @module dsh-lark-session-monitor-plugin/normalize
  */
 
 function isRecord(value) {

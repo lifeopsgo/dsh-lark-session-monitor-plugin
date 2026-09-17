@@ -14,7 +14,7 @@
  * - The cursor advances only after delivery succeeds. Advancing first would
  *   silently drop messages whenever a delivery failed.
  *
- * @module dsh-lark-session-monitor/runtime
+ * @module dsh-lark-session-monitor-plugin/runtime
  */
 
 import { isAppSender, renderMessage, senderLabel } from './normalize.mjs';

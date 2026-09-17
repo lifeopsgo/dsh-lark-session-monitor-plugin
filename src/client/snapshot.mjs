@@ -8,7 +8,7 @@
  * it arrived first) are invisible in a component test but obvious against
  * these functions.
  *
- * @module dsh-lark-session-monitor/client/snapshot
+ * @module dsh-lark-session-monitor-plugin/client/snapshot
  */
 
 /**
