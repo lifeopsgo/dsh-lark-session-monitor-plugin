@@ -12,13 +12,13 @@
     "session",
     "monitor"
   ],
-  "homepage": "https://github.com/lifeopsgo/dsh-lark-session-monitor#readme",
+  "homepage": "https://github.com/lifeopsgo/dsh-lark-session-monitor-plugin#readme",
   "bugs": {
-    "url": "https://github.com/lifeopsgo/dsh-lark-session-monitor/issues"
+    "url": "https://github.com/lifeopsgo/dsh-lark-session-monitor-plugin/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lifeopsgo/dsh-lark-session-monitor.git"
+    "url": "git+https://github.com/lifeopsgo/dsh-lark-session-monitor-plugin.git"
   },
   "type": "module",
   "main": "./lib/index.js",

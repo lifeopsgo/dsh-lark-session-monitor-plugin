@@ -27,7 +27,7 @@
 需要 **Node.js ≥ 22.6**。
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor#v0.1.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v0.1.0
 ```
 
 重启 DSH，然后刷新页面。打开 **设置 → 插件 → 飞书会话监听**。
@@ -36,7 +36,7 @@ dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor#v0.1.0
 <summary>升级或卸载</summary>
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor#v0.1.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v0.1.0
 dsh plugin --profile web remove dsh-lark-session-monitor
 ```
 
