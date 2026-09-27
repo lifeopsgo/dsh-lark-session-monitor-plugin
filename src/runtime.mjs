@@ -17,7 +17,8 @@
  * @module dsh-lark-session-monitor-plugin/runtime
  */
 
-import { isAppSender, renderMessage, senderLabel } from './normalize.mjs';
+import { isAppSender, isFromSenders, isOwnMessage, mentionsId, renderMessage, senderLabel } from './normalize.mjs';
+import { MIN_POLL_INTERVAL_MS } from './store.mjs';
 
 /** Messages delivered in one prompt; the remainder waits for the next round. */
 export const MAX_BATCH_SIZE = 10;
@@ -60,14 +61,20 @@ export class MonitorRuntime {
   #pending = new Map();
   #state = new Map();
   #controller = new AbortController();
+  /** The signed-in user's identity, fetched once for own-message filtering. */
+  #identityCache;
+  /** The app bot's open_id, fetched once for the @机器人 filter. */
+  #botIdCache;
+  #getBotOpenId;
 
-  constructor({ store, deliverer, getClient, getIntervalMs, logger = console, now = Date.now }) {
+  constructor({ store, deliverer, getClient, getIntervalMs, logger = console, now = Date.now, getBotOpenId }) {
     this.#store = store;
     this.#deliverer = deliverer;
     this.#getClient = getClient;
     this.#getIntervalMs = getIntervalMs ?? (() => 30_000);
     this.#logger = logger;
     this.#now = now;
+    this.#getBotOpenId = getBotOpenId;
   }
 
   /** Per-monitor status for the settings page. */
@@ -89,7 +96,7 @@ export class MonitorRuntime {
   start() {
     if (this.#closed) throw new Error('Monitor runtime is closed');
     if (this.#timer) return;
-    const interval = Math.max(10_000, Number(this.#getIntervalMs()) || 30_000);
+    const interval = Math.max(MIN_POLL_INTERVAL_MS, Number(this.#getIntervalMs()) || 30_000);
     this.#timer = setInterval(() => { void this.poll(); }, interval);
     // Do not keep the process alive purely for polling.
     this.#timer.unref?.();
@@ -118,6 +125,54 @@ export class MonitorRuntime {
   /** Best-effort client construction; a missing token surfaces as poll error. */
   async #client(signal) {
     return this.#getClient({ signal });
+  }
+
+  /**
+   * Resolve the signed-in user's identity once, for own-message filtering.
+   *
+   * A failure is cached as "no identity" and logged once: re-fetching every
+   * poll would hammer a dying endpoint, and surfacing it as a monitor error
+   * would turn a decoration fetch into a delivery outage. The safe reading
+   * of "cannot tell who sent this" is to deliver it as before.
+   */
+  async #identity(client, signal) {
+    if (this.#identityCache) return this.#identityCache.identity;
+    try {
+      const identity = await client.userInfo({ signal });
+      this.#identityCache = { identity };
+    } catch (error) {
+      // An aborted poll is not a failed fetch: try again on the next round.
+      if (error?.name === 'AbortError') return undefined;
+      this.#identityCache = { identity: undefined };
+      this.#logger.warn?.(
+        '[lark-session-monitor] could not load your Feishu identity; own messages cannot be filtered: '
+        + `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return this.#identityCache.identity;
+  }
+
+  /**
+   * The app bot's open_id, for the @机器人 filter.
+   *
+   * Success is cached for the process. A failure is not cached: this filter
+   * cannot fail open (that would turn a narrow filter into a firehose), so
+   * the round is held and retried until the identity resolves — the
+   * monitor's lastError carries the platform's own message.
+   */
+  async #botId(signal) {
+    if (this.#botIdCache) return this.#botIdCache;
+    if (typeof this.#getBotOpenId !== 'function') return undefined;
+    try {
+      const openId = await this.#getBotOpenId({ signal });
+      if (typeof openId === 'string' && openId) this.#botIdCache = openId;
+      return this.#botIdCache;
+    } catch (error) {
+      // Keep the platform's own reason, but with enough context for the
+      // settings page to say what to fix.
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`无法识别本应用的机器人身份（${reason}）：请确认应用已启用机器人能力，且 App ID 与 App Secret 有效。`);
+    }
   }
 
   /**
@@ -170,7 +225,40 @@ export class MonitorRuntime {
       const fresh = this.#selectFresh(latest, messages);
       if (fresh.length === 0) return;
 
-      const bodies = fresh
+      // The cursor still covers the whole `fresh` page (see #enqueue), so
+      // skipped own messages are never re-read; only the delivery shrinks.
+      let deliverable = fresh;
+      if (latest.skipOwnMessages === true) {
+        const identity = await this.#identity(client, signal);
+        if (identity) deliverable = fresh.filter((m) => !isOwnMessage(m, identity));
+      }
+      // Source acceptance. The sender list narrows the stream; the @机器人
+      // switch widens it back by exactly one case: a message that names the
+      // bot is accepted even when its sender is not on the list — being
+      // addressed is the signal, not who typed it. An empty list plus the
+      // switch therefore means "only @bot messages"; with both off, every
+      // message is delivered as before. skipOwnMessages stays outermost, so
+      // the user's own test pings never ride the mention path back in.
+      const senderIds = Array.isArray(latest.onlySenderIds) ? latest.onlySenderIds : [];
+      const wantSenders = senderIds.length > 0;
+      const wantMention = latest.alsoBotMention === true;
+      let botOpenId;
+      if (wantMention) {
+        botOpenId = await this.#botId(signal);
+        if (!botOpenId) {
+          // Failing open would deliver every message — the opposite of the
+          // filter's intent. Hold the round instead: the cursor is untouched
+          // and every poll retries until the identity resolves.
+          throw new Error('无法识别本应用的机器人身份：请确认应用已启用机器人能力，且 App ID 与 App Secret 有效。');
+        }
+      }
+      if (wantSenders || wantMention) {
+        deliverable = deliverable.filter((message) =>
+          (wantSenders && isFromSenders(message, senderIds))
+          || (wantMention && mentionsId(message, botOpenId)));
+      }
+
+      const bodies = deliverable
         .map((message) => this.#format(latest, message))
         .filter((body) => typeof body === 'string' && body);
       if (bodies.length === 0) {

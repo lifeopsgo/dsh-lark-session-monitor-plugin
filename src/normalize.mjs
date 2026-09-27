@@ -134,6 +134,99 @@ export function isAppSender(message) {
   return senderType === 'app' || senderType === 'bot';
 }
 
+/**
+ * True when the message was sent by the signed-in user themself.
+ *
+ * The identity and the message's sender each carry any subset of
+ * open_id/union_id/user_id; matching on whichever pair both sides expose is
+ * enough. Without an identity the answer is "not ours", so the filter fails
+ * open — an identity outage must not silently stop delivery.
+ */
+export function isOwnMessage(message, identity) {
+  if (!identity) return false;
+  const sender = message?.sender;
+  const sent = [
+    sender?.id,
+    sender?.sender_id?.open_id,
+    sender?.sender_id?.union_id,
+    sender?.sender_id?.user_id,
+  ];
+  const own = [identity.openId, identity.unionId, identity.userId];
+  return sent.some((value) => typeof value === 'string' && value && own.includes(value));
+}
+
+/** Every id the message's sender may be known by. */
+function senderIdsOf(message) {
+  const sender = message?.sender;
+  return [
+    sender?.id,
+    sender?.sender_id?.open_id,
+    sender?.sender_id?.union_id,
+    sender?.sender_id?.user_id,
+  ].filter((value) => typeof value === 'string' && value);
+}
+
+/**
+ * True when the message's sender is in the whitelist.
+ *
+ * An empty or absent list is "no restriction", never "deliver nothing".
+ */
+export function isFromSenders(message, senderIdList) {
+  if (!Array.isArray(senderIdList) || senderIdList.length === 0) return true;
+  const wanted = new Set(senderIdList.filter((value) => typeof value === 'string' && value));
+  return senderIdsOf(message).some((id) => wanted.has(id));
+}
+
+/**
+ * True when the message @-mentions the given open_id.
+ *
+ * Text messages carry a `mentions` array (the list reads populate it with
+ * the mentioned entity's open_id); post messages embed the id in their `at`
+ * nodes. Both spellings are checked.
+ */
+export function mentionsId(message, id) {
+  if (typeof id !== 'string' || !id) return false;
+  const mentions = Array.isArray(message?.mentions) ? message.mentions : [];
+  for (const mention of mentions) {
+    if (isRecord(mention) && mention.id === id) return true;
+  }
+  const content = parseContent(message?.body?.content);
+  const elements = content?.content ?? content?.elements ?? (Array.isArray(content) ? content : []);
+  for (const line of Array.isArray(elements) ? elements : []) {
+    if (!Array.isArray(line)) continue;
+    for (const node of line) {
+      if (isRecord(node) && node.tag === 'at' && node.user_id === id) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Distinct senders observed in a page of messages, for the picker.
+ *
+ * The id is what `sender.id` carries (a user's open_id or an app's app_id),
+ * so picking a sender produces exactly the id the runtime filter matches on.
+ * Names are best effort: chat reads do not always carry them.
+ */
+export function distinctSenders(messages) {
+  const byId = new Map();
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const sender = isRecord(message?.sender) ? message.sender : undefined;
+    const id = typeof sender?.id === 'string' && sender.id ? sender.id
+      : (typeof sender?.sender_id?.open_id === 'string' ? sender.sender_id.open_id : '');
+    if (!id) continue;
+    const name = typeof sender?.name === 'string' ? sender.name.trim() : '';
+    const type = sender?.sender_type === 'app' || sender?.sender_type === 'bot' ? 'bot' : 'user';
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, { id, name, type });
+    } else if (name && !existing.name) {
+      existing.name = name;
+    }
+  }
+  return [...byId.values()];
+}
+
 /** Display name for a message's sender, falling back to the raw id. */
 export function senderLabel(message) {
   const sender = message?.sender;

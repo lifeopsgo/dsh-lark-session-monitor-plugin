@@ -28,6 +28,7 @@ const EP = Object.freeze({
   authComplete: 'auth.complete',
   authSignOut: 'auth.signOut',
   chatList: 'chat.list',
+  chatSenders: 'chat.senders',
   monitorSave: 'monitor.save',
   monitorDelete: 'monitor.delete',
   monitorReset: 'monitor.reset',
@@ -168,6 +169,14 @@ function installStyles() {
   padding: 8px; font-size: 11.5px; text-align: center;
   color: var(--dsw-alias-label-secondary);
 }
+/* Multi-select for source filtering: the candidates are a bounded sample of
+   the conversation's recent speakers, so a scrollable column stays short. */
+.lsm-sender-list {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 168px; overflow-y: auto;
+  padding: 6px 8px; border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2);
+}
 `;
   document.head.appendChild(style);
   return () => { style.remove(); };
@@ -275,11 +284,14 @@ const EMPTY_DRAFT = Object.freeze({
   sessionId: '',
   sessionTitle: '',
   autoCreateAndPin: false,
+  skipOwnMessages: false,
+  onlySenderIds: [],
+  alsoBotMention: false,
   enabled: true,
 });
 
 /** The monitor editor form. */
-function MonitorEditor({ draft, setDraft, chats, targets, onSave, onCancel, busy, error }) {
+function MonitorEditor({ draft, setDraft, chats, targets, senders, onSave, onCancel, busy, error }) {
   const update = (patch) => setDraft({ ...draft, ...patch });
   const [chatKind, setChatKind] = React.useState('all');
   const workspaceSessions = targets.find((w) => w.path === draft.workspace)?.sessions ?? [];
@@ -366,6 +378,38 @@ function MonitorEditor({ draft, setDraft, chats, targets, onSave, onCancel, busy
           }),
         })),
     ),
+    // Source filtering: an empty sender list and an unchecked mention box
+    // mean "every message", which is also the default for saved monitors.
+    // Rendered as a plain div, not a Field: a Field is one <label>, and a
+    // label may only control one form element — wrapping the checkbox list
+    // in it would make clicking any name toggle the first checkbox.
+    h('div', { className: 'lsm-field' },
+      h('span', { className: 'lsm-label' }, '消息来源：仅接收指定发送者（留空 = 所有发送者）'),
+      !draft.chatId
+        ? h('span', { className: 'lsm-hint' }, '请先选择要监听的会话')
+        : h('div', { className: 'lsm-sender-list' },
+            senders.length === 0
+              ? h('span', { className: 'lsm-hint' },
+                  '正在读取发送者…（候选来自该会话最近 7 天的消息，未发言的成员不会出现在列表中）')
+              : senders.map((sender) => h('label', { key: sender.id, className: 'lsm-inline' },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: (draft.onlySenderIds ?? []).includes(sender.id),
+                    onChange: (e) => update({
+                      onlySenderIds: e.target.checked
+                        ? [...(draft.onlySenderIds ?? []), sender.id]
+                        : (draft.onlySenderIds ?? []).filter((id) => id !== sender.id),
+                    }),
+                  }),
+                  h('span', { className: 'lsm-hint' },
+                    `${sender.name || sender.id}（${sender.type === 'bot' ? '机器人' : '用户'}）`))))),
+    h('label', { className: 'lsm-inline' },
+      h('input', {
+        type: 'checkbox', checked: draft.alsoBotMention === true,
+        onChange: (e) => update({ alsoBotMention: e.target.checked }),
+      }),
+      h('span', { className: 'lsm-hint' },
+        '也接收 @机器人 的消息（@本应用机器人的消息不受发送者名单限制；名单留空时即只收 @机器人 的消息）')),
     // Only meaningful while no session is chosen: it decides whether the
     // auto-created session is reused or a fresh one is made per message.
     draft.sessionId
@@ -378,6 +422,12 @@ function MonitorEditor({ draft, setDraft, chats, targets, onSave, onCancel, busy
           }),
           h('span', { className: 'lsm-hint' },
             '自动创建并固定绑定（勾选：首次自动创建后固定使用该会话；不勾选：每条消息都新建一个会话）')),
+    h('label', { className: 'lsm-inline' },
+      h('input', {
+        type: 'checkbox', checked: draft.skipOwnMessages === true,
+        onChange: (e) => update({ skipOwnMessages: e.target.checked }),
+      }),
+      h('span', { className: 'lsm-hint' }, '过滤自己发送的消息（不投递你本人发送的消息）')),
     h('label', { className: 'lsm-inline' },
       h('input', {
         type: 'checkbox', checked: draft.enabled,
@@ -495,6 +545,26 @@ export function LarkMonitorPage({ rpcCall }) {
   }, [invoke]);
 
   /**
+   * Sender candidates for the source picker, observed in the drafted chat.
+   *
+   * Loaded only while the editor is open on a chosen chat: the read is a
+   * bounded sample of recent messages, not a membership list, and a stale
+   * one would mislead. Failure reads as "no candidates" — the empty hint
+   * already says where candidates come from.
+   */
+  const [senders, setSenders] = React.useState([]);
+  React.useEffect(() => {
+    const chatId = draft?.chatId;
+    if (!chatId) { setSenders([]); return undefined; }
+    let cancelled = false;
+    setSenders([]);
+    invoke(EP.chatSenders, { chatId })
+      .then((data) => { if (!cancelled) setSenders(data.senders ?? []); })
+      .catch(() => { if (!cancelled) setSenders([]); });
+    return () => { cancelled = true; };
+  }, [draft?.chatId, invoke]);
+
+  /**
    * Titles for the sessions the monitors point at.
    *
    * A monitor saved before the title was captured alongside the id holds an
@@ -564,17 +634,17 @@ export function LarkMonitorPage({ rpcCall }) {
           h(Field, {
             label: '轮询间隔（秒）',
             className: 'lsm-field-narrow',
-            title: '最小 10 秒',
+            title: '最小 2 秒',
           },
             h('input', {
               // Stored as milliseconds; shown as seconds because that is the
               // unit a person reasons about here.
-              className: 'lsm-input', type: 'number', min: 10, step: 1,
-              title: '最小 10 秒',
+              className: 'lsm-input', type: 'number', min: 2, step: 1,
+              title: '最小 2 秒',
               value: Math.round(appForm.pollIntervalMs / 1000),
               onChange: (e) => setAppForm({
                 ...appForm,
-                pollIntervalMs: Math.max(10, Number(e.target.value) || 10) * 1000,
+                pollIntervalMs: Math.max(2, Number(e.target.value) || 2) * 1000,
               }),
             })),
           h(Field, { label: '\u00a0' },
@@ -633,7 +703,7 @@ export function LarkMonitorPage({ rpcCall }) {
         '每 30 秒轮询一次被监听会话；新消息以「Prompt + 消息文本」投递到目标会话。图片、文件等非文本消息以类型标签投递。'),
 
       draft ? h(MonitorEditor, {
-        draft, setDraft, chats, targets, busy, error: editorError,
+        draft, setDraft, chats, targets, senders, busy, error: editorError,
         onCancel: () => setDraft(null),
         onSave: () => run(async () => {
           setEditorError('');
@@ -682,6 +752,14 @@ export function LarkMonitorPage({ rpcCall }) {
                 ? h('span', { title: monitor.sessionId },
                     `目标：${monitor.sessionTitle || sessionTitles.get(monitor.sessionId) || monitor.sessionId}`)
                 : (monitor.autoCreateAndPin ? '目标：自动创建并固定绑定（尚未创建）' : '目标：每条消息新建')),
+            monitor.skipOwnMessages ? h('span', null, '过滤自己消息') : null,
+            monitor.alsoBotMention || (monitor.onlySenderIds?.length ?? 0) > 0
+              ? h('span', null, [
+                  (monitor.onlySenderIds?.length ?? 0) > 0
+                    ? `指定发送者×${monitor.onlySenderIds.length}` : '',
+                  monitor.alsoBotMention ? '@机器人' : '',
+                ].filter(Boolean).map((part, index) => (index === 0 ? `来源：${part}` : ` 或 ${part}`)).join(''))
+              : null,
             h('span', null, `已投递 ${status.delivered ?? 0} 条`),
             h('span', null, `最后轮询：${formatTime(status.lastPollAt)}`)),
           h('div', { className: 'lsm-meta' },

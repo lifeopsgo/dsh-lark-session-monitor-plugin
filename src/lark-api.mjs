@@ -1,7 +1,7 @@
 /**
  * Feishu Open API reads performed with the signed-in user's own token.
  *
- * Only the two read endpoints the monitor needs live here, plus the batch
+ * Only the read endpoints the monitor needs live here, plus the batch
  * lookup used to resolve chat names for display. Every call goes through
  * {@link LarkUserClient#request}, which attaches the user token and normalizes
  * Feishu's envelope (`code !== 0` is an error even on HTTP 200 — a detail that
@@ -152,8 +152,10 @@ export class LarkUserClient {
    *
    * `start_time` is exclusive on Feishu's side and mandatory here: without it
    * the first poll would page through the conversation's entire history.
+   * `maxMessages` bounds the read for callers that only need a sample —
+   * the sender picker stops paging once it has enough.
    */
-  async listMessages({ chatId, startTimeSeconds, endTimeSeconds, signal }) {
+  async listMessages({ chatId, startTimeSeconds, endTimeSeconds, maxMessages, signal }) {
     const messages = [];
     let pageToken;
     for (let page = 0; page < 20; page += 1) {
@@ -171,10 +173,28 @@ export class LarkUserClient {
       });
       const items = data?.items ?? [];
       messages.push(...items);
+      if (maxMessages !== undefined && messages.length >= maxMessages) break;
       if (!data?.has_more || !data?.page_token) break;
       pageToken = data.page_token;
     }
     return messages;
+  }
+
+  /**
+   * The signed-in user's own identity, used to recognize self-sent messages.
+   *
+   * The endpoint needs no scope beyond a valid user token. `user_id` is a
+   * sensitive field and may come back empty, which is fine: open_id is what
+   * the message reads carry.
+   */
+  async userInfo({ signal } = {}) {
+    const data = await this.#request('/open-apis/authen/v1/user_info', { signal });
+    return {
+      openId: typeof data?.open_id === 'string' ? data.open_id : '',
+      unionId: typeof data?.union_id === 'string' ? data.union_id : '',
+      userId: typeof data?.user_id === 'string' ? data.user_id : '',
+      name: typeof data?.name === 'string' ? data.name.trim() : '',
+    };
   }
 
   /** Resolve display names for chat ids; failures degrade to the raw id. */

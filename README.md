@@ -26,7 +26,7 @@ A **DeepSeek Harness (DSH)** plugin that reads Feishu conversations with **your 
 Requires **Node.js ≥ 22.6**.
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.0.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.0
 ```
 
 Restart DSH, then refresh the page. Open **Settings → Plugins → 飞书会话监听**.
@@ -35,7 +35,7 @@ Restart DSH, then refresh the page. Open **Settings → Plugins → 飞书会话
 <summary>Upgrade or remove</summary>
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.0.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.0
 dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 ```
 
@@ -74,6 +74,9 @@ Click **新建监听**:
 | **Prompt** | Sent first, with the message text beneath it |
 | **目标工作区** | Where the target session lives |
 | **目标会话** | Leave empty to auto-create |
+| **Skip own messages** | Off by default; when on, messages you sent yourself are not delivered |
+| **Senders** | Empty by default = all senders; pick specific users or bots to receive only their messages |
+| **Also @bot mentions** | Off by default; when on, messages that @-mention this app's bot are delivered even from senders outside the whitelist |
 | **启用** | Whether this monitor polls |
 
 ## How delivery works
@@ -100,12 +103,15 @@ New messages are delivered as one prompt:
 
 **Polling.** Polls are single-flight per monitor. At most **10 messages** per prompt; the remainder follows after that delivery. The cursor advances only after a successful delivery, so a failed delivery re-reads its messages.
 
+**Own messages.** A monitor can skip messages you sent yourself; if your identity cannot be read, messages are delivered as before.
+**Source filters.** The sender list narrows a monitor to specific senders (candidates are whoever spoke in the chat recently); the @bot switch widens it back by one case: a message that @-mentions this app's bot is accepted even from a sender outside the list — being addressed is the signal, not who typed it. Leave the list empty with the switch on and only @bot messages arrive; leave both unset and everything is delivered as before. The bot's identity is resolved through the app's own credentials — no extra scope; while it cannot be resolved the round is held: nothing delivered, nothing lost, retried every poll.
+
 
 ## Privacy
 
 - Reads only the conversations you configure, within the polling window.
 - The App Secret stays in the settings file; the user token stays in DSH's credentials service. Neither is returned over RPC.
-- The only network access is the Feishu API calls you authorized. No telemetry.
+- The only network access is the Feishu API calls you authorized: your user token for chat reads, plus the app's own credentials to resolve the bot identity behind the @-mention filter. No telemetry.
 - Message text goes only to the DSH session you selected. The plugin never replies into Feishu.
 - The settings endpoint rides DSH's authenticated `/api` carrier. `rpcAuthority: loopback` additionally requires a loopback Host and Origin.
 

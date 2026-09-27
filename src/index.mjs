@@ -17,9 +17,11 @@
  */
 
 import { Authorizer } from './auth.mjs';
+import { fetchAppBotOpenId } from './bot-identity.mjs';
 import { SessionDeliverer, HarnessGateway } from './deliver.mjs';
 import { listInventory, listWorkspaceTargets } from './inventory.mjs';
 import { LarkUserClient } from './lark-api.mjs';
+import { distinctSenders } from './normalize.mjs';
 import { MonitorRuntime } from './runtime.mjs';
 import { registerSettingsRpc } from './rpc.mjs';
 import { MonitorStore, publicSettings } from './store.mjs';
@@ -149,6 +151,19 @@ export function apply(ctx, config) {
       getClient: async () => clientFor(),
       getIntervalMs: intervalReader(store),
       logger,
+      // The @机器人 acceptance path needs the app bot's own open_id; the
+      // stored appId/appSecret pair is the only bridge to it. Fetched
+      // lazily, at most once per process, and only when a monitor uses the
+      // switch.
+      getBotOpenId: ({ signal }) => {
+        const app = store.snapshot().app;
+        return fetchAppBotOpenId({
+          appId: app.appId,
+          appSecret: app.appSecret,
+          domain: app.domain,
+          signal,
+        });
+      },
     });
     instance.start();
     runtime.current = instance;
@@ -244,6 +259,32 @@ export function apply(ctx, config) {
       const list = await cachedChats(force);
       const limit = settings.maxChats;
       return { chats: list.slice(0, limit), truncated: list.length > limit };
+    },
+
+    /**
+     * Senders observed in a conversation, for the source picker.
+     *
+     * Candidates come from the last week of messages through the same
+     * user-token read the poller uses — no extra scope, and a member who
+     * has never spoken simply is not offered as a choice.
+     */
+    async 'chat.senders'(payload, signal) {
+      const chatId = typeof payload?.chatId === 'string' ? payload.chatId : '';
+      if (!chatId) {
+        const error = new Error('缺少 chatId。');
+        error.code = 'invalid-argument';
+        throw error;
+      }
+      await requireAuthorized();
+      const now = Date.now();
+      const messages = await clientFor().listMessages({
+        chatId,
+        startTimeSeconds: Math.floor((now - 7 * 24 * 60 * 60 * 1000) / 1000),
+        endTimeSeconds: Math.floor(now / 1000) + 1,
+        maxMessages: 200,
+        signal,
+      });
+      return { senders: distinctSenders(messages) };
     },
 
     async 'monitor.save'(payload) {

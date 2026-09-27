@@ -57,25 +57,39 @@ function fakeDeliverer({ fail = false } = {}) {
   };
 }
 
-/** Client double returning a scripted message page. */
-function fakeClient(messages) {
+/** Client double returning a scripted message page and, optionally, an identity. */
+function fakeClient(messages, { identity, identityError } = {}) {
   const calls = [];
-  return {
+  const client = {
     calls,
     listMessages: async (options) => {
       calls.push(options);
       return messages;
     },
   };
+  if (identity !== undefined || identityError !== undefined) {
+    client.userInfoCalls = 0;
+    client.userInfo = async () => {
+      client.userInfoCalls += 1;
+      if (identityError) throw identityError;
+      return identity;
+    };
+  }
+  return client;
 }
 
-function feishuMessage({ id, text, timeMs, sender = '张三', senderType = 'user', type = 'text' }) {
+function feishuMessage({ id, text, timeMs, sender = '张三', senderType = 'user', type = 'text', senderId, mentions }) {
   return {
     message_id: id,
     msg_type: type,
     create_time: String(timeMs),
     deleted: false,
-    sender: { sender_type: senderType, name: sender },
+    sender: {
+      sender_type: senderType,
+      name: sender,
+      ...(senderId ? { sender_id: { open_id: senderId } } : {}),
+    },
+    ...(mentions ? { mentions } : {}),
     body: { content: JSON.stringify({ text }) },
   };
 }
@@ -91,16 +105,21 @@ function monitor(overrides = {}) {
   };
 }
 
-function runtimeFor({ monitors, messages, deliverer, now = () => 1_700_000_000_000, client }) {
+function runtimeFor({
+  monitors, messages, deliverer, now = () => 1_700_000_000_000, client,
+  logger = { warn: () => {}, error: () => {} }, getIntervalMs = () => 30_000,
+  getBotOpenId,
+}) {
   const store = fakeStore(monitors);
   const clientImpl = client ?? fakeClient(messages);
   const runtime = new MonitorRuntime({
     store,
     deliverer,
     getClient: async () => clientImpl,
-    getIntervalMs: () => 30_000,
-    logger: { warn: () => {}, error: () => {} },
+    getIntervalMs,
+    logger,
     now,
+    getBotOpenId,
   });
   return { runtime, store, client: clientImpl };
 }
@@ -308,4 +327,196 @@ test('a multi-batch page re-reads the monitor so a pinned session is reused', as
   assert.equal(deliveredFor[0].sessionId, '');
   // The second batch must see the session the first batch pinned.
   assert.equal(deliveredFor[1].sessionId, 's_pinned');
+});
+
+test('skipOwnMessages drops your own messages and delivers the rest', async () => {
+  const deliverer = fakeDeliverer();
+  const identity = { openId: 'ou_me', unionId: 'on_me', userId: '', name: '我' };
+  const messages = [
+    feishuMessage({ id: 'om_1', text: '别人的', timeMs: 1_700_000_000_000, sender: '同事', senderId: 'ou_other' }),
+    feishuMessage({ id: 'om_2', text: '我的', timeMs: 1_700_000_001_000, sender: '我', senderId: 'ou_me' }),
+  ];
+  const client = fakeClient(messages, { identity });
+  const { runtime, store } = runtimeFor({
+    monitors: [monitor({ skipOwnMessages: true, cursor: { lastCreateTimeMs: 1_699_999_999_000 } })],
+    deliverer, client,
+  });
+  await runtime.poll();
+  assert.deepEqual(deliverer.batches[0].bodies, ['[同事] 别人的']);
+  // The cursor must pass the skipped message, or it is re-read every poll.
+  assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
+});
+
+test('a batch of only your own messages delivers nothing but still advances', async () => {
+  const deliverer = fakeDeliverer();
+  const identity = { openId: 'ou_me', unionId: 'on_me', userId: '', name: '我' };
+  const messages = [feishuMessage({ id: 'om_1', text: '我的', timeMs: 1_700_000_000_000, senderId: 'ou_me' })];
+  const client = fakeClient(messages, { identity });
+  const { runtime, store } = runtimeFor({
+    monitors: [monitor({ skipOwnMessages: true, cursor: { lastCreateTimeMs: 1_699_999_999_000 } })],
+    deliverer, client,
+  });
+  await runtime.poll();
+  assert.equal(deliverer.batches.length, 0);
+  assert.equal(store.state[0].cursor.lastMessageId, 'om_1');
+});
+
+test('own messages are delivered when the filter is off, and no identity is fetched', async () => {
+  const deliverer = fakeDeliverer();
+  const identity = { openId: 'ou_me', unionId: 'on_me', userId: '', name: '我' };
+  const messages = [feishuMessage({ id: 'om_1', text: '我的', timeMs: 1_700_000_000_000, senderId: 'ou_me' })];
+  const client = fakeClient(messages, { identity });
+  const { runtime } = runtimeFor({ monitors: [monitor()], deliverer, client });
+  await runtime.poll();
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 我的']);
+  assert.equal(client.userInfoCalls, 0);
+});
+
+test('a failed identity fetch fails open instead of dropping messages', async () => {
+  const deliverer = fakeDeliverer();
+  const warnings = [];
+  const messages = [feishuMessage({ id: 'om_1', text: '我的', timeMs: 1_700_000_000_000, senderId: 'ou_me' })];
+  const client = fakeClient(messages, { identityError: new Error('user_info unavailable') });
+  const { runtime } = runtimeFor({
+    monitors: [monitor({ skipOwnMessages: true })],
+    deliverer, client,
+    logger: { warn: (...args) => warnings.push(args), error: () => {} },
+  });
+  await runtime.poll();
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 我的']);
+  assert.ok(warnings.some((args) => /identity/.test(String(args[0]))));
+});
+
+test('start schedules the timer at the configured interval, down to two seconds', () => {
+  // Observe the real timer contract rather than internals: the delay handed
+  // to setInterval is what the user configured.
+  const original = globalThis.setInterval;
+  let observed = 0;
+  globalThis.setInterval = (handler, delay, ...rest) => {
+    observed = delay;
+    return original(handler, delay, ...rest);
+  };
+  try {
+    const { runtime } = runtimeFor({
+      monitors: [], messages: [], deliverer: fakeDeliverer(),
+      getIntervalMs: () => 2_000,
+    });
+    runtime.start();
+    runtime.stop();
+    assert.equal(observed, 2_000);
+  } finally {
+    globalThis.setInterval = original;
+  }
+});
+
+test('onlySenderIds delivers just the whitelisted senders', async () => {
+  const deliverer = fakeDeliverer();
+  const messages = [
+    feishuMessage({ id: 'om_1', text: '白名单内', timeMs: 1_700_000_000_000, sender: '张三', senderId: 'ou_a' }),
+    feishuMessage({ id: 'om_2', text: '白名单外', timeMs: 1_700_000_001_000, sender: '李四', senderId: 'ou_b' }),
+  ];
+  const { runtime, store } = runtimeFor({
+    monitors: [monitor({ onlySenderIds: ['ou_a'], cursor: { lastCreateTimeMs: 1_699_999_999_000 } })],
+    messages, deliverer,
+  });
+  await runtime.poll();
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 白名单内']);
+  // The cursor passes the skipped sender's message, so it is not re-read.
+  assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
+});
+
+test('alsoBotMention with an empty sender list means only @bot messages', async () => {
+  const deliverer = fakeDeliverer();
+  let botIdCalls = 0;
+  const messages = [
+    feishuMessage({ id: 'om_1', text: '叫我', timeMs: 1_700_000_000_000, mentions: [{ key: '@_user_1', id: 'ou_bot' }] }),
+    feishuMessage({ id: 'om_2', text: '不叫我', timeMs: 1_700_000_001_000 }),
+  ];
+  const { runtime, store } = runtimeFor({
+    monitors: [monitor({ alsoBotMention: true, cursor: { lastCreateTimeMs: 1_699_999_999_000 } })],
+    messages, deliverer,
+    getBotOpenId: async () => { botIdCalls += 1; return 'ou_bot'; },
+  });
+  await runtime.poll();
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 叫我']);
+  assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
+  // The bot identity is cached for the process; a second poll does not re-fetch.
+  await runtime.poll();
+  assert.equal(botIdCalls, 1);
+});
+
+test('an @bot message is delivered even when its sender is not whitelisted', async () => {
+  const deliverer = fakeDeliverer();
+  const messages = [
+    feishuMessage({ id: 'om_1', text: '白名单内的普通消息', timeMs: 1_700_000_000_000, sender: '张三', senderId: 'ou_a' }),
+    feishuMessage({ id: 'om_2', text: '路人点名机器人', timeMs: 1_700_000_001_000, sender: '李四', senderId: 'ou_b', mentions: [{ key: '@_user_1', id: 'ou_bot' }] }),
+    feishuMessage({ id: 'om_3', text: '路人的普通消息', timeMs: 1_700_000_002_000, sender: '王五', senderId: 'ou_c' }),
+  ];
+  const { runtime, store } = runtimeFor({
+    monitors: [monitor({
+      onlySenderIds: ['ou_a'], alsoBotMention: true, cursor: { lastCreateTimeMs: 1_699_999_999_000 },
+    })],
+    messages, deliverer,
+    getBotOpenId: async () => 'ou_bot',
+  });
+  await runtime.poll();
+  // Both acceptance paths, in conversation order: the whitelisted sender,
+  // and the @bot mention from outside the whitelist.
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 白名单内的普通消息', '[李四] 路人点名机器人']);
+  assert.equal(store.state[0].cursor.lastMessageId, 'om_3');
+});
+
+test('the mention path does not resurrect own messages', async () => {
+  const deliverer = fakeDeliverer();
+  const identity = { openId: 'ou_me', unionId: 'on_me', userId: '', name: '我' };
+  const messages = [
+    feishuMessage({ id: 'om_1', text: '我自己@机器人测试', timeMs: 1_700_000_000_000, sender: '我', senderId: 'ou_me', mentions: [{ key: '@_user_1', id: 'ou_bot' }] }),
+    feishuMessage({ id: 'om_2', text: '同事@机器人', timeMs: 1_700_000_001_000, sender: '李四', senderId: 'ou_b', mentions: [{ key: '@_user_1', id: 'ou_bot' }] }),
+  ];
+  const client = fakeClient(messages, { identity });
+  const { runtime } = runtimeFor({
+    monitors: [monitor({ skipOwnMessages: true, alsoBotMention: true, cursor: { lastCreateTimeMs: 1_699_999_999_000 } })],
+    client, deliverer,
+    getBotOpenId: async () => 'ou_bot',
+  });
+  await runtime.poll();
+  // skipOwnMessages still wins over the mention path: only the colleague's
+  // @bot message is delivered, the user's own test ping is not.
+  assert.deepEqual(deliverer.batches[0].bodies, ['[李四] 同事@机器人']);
+});
+
+test('a missing bot identity holds the round instead of failing open', async () => {
+  const deliverer = fakeDeliverer();
+  let botIdCalls = 0;
+  const messages = [
+    feishuMessage({ id: 'om_1', text: '叫我', timeMs: 1_700_000_000_000, mentions: [{ key: '@_user_1', id: 'ou_bot' }] }),
+  ];
+  const { runtime, store } = runtimeFor({
+    monitors: [monitor({ alsoBotMention: true, cursor: { lastCreateTimeMs: 1_699_999_999_000 } })],
+    messages, deliverer,
+    getBotOpenId: async () => { botIdCalls += 1; throw new Error('App Secret 不正确'); },
+  });
+  await runtime.poll();
+  await runtime.poll();
+  assert.equal(deliverer.batches.length, 0);
+  // Fail-open would deliver everything — the opposite of the filter's intent.
+  // Instead the cursor is held and every poll retries the identity.
+  assert.equal(store.state[0].cursor.lastMessageId, undefined);
+  assert.equal(botIdCalls, 2);
+  const status = runtime.status().find((s) => s.monitorId === store.state[0].monitorId);
+  assert.match(String(status?.lastError ?? ''), /机器人/);
+});
+
+test('the identity is fetched once and cached across polls', async () => {
+  const deliverer = fakeDeliverer();
+  const identity = { openId: 'ou_me', unionId: 'on_me', userId: '', name: '我' };
+  const messages = [feishuMessage({ id: 'om_1', text: '我的', timeMs: 1_700_000_000_000, senderId: 'ou_me' })];
+  const client = fakeClient(messages, { identity });
+  const { runtime } = runtimeFor({
+    monitors: [monitor({ skipOwnMessages: true, cursor: { lastCreateTimeMs: 1_699_999_999_000 } })],
+    deliverer, client,
+  });
+  await runtime.poll();
+  await runtime.poll();
+  assert.equal(client.userInfoCalls, 1);
 });

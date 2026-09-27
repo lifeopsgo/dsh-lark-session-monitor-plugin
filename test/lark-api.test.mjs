@@ -114,3 +114,31 @@ test('an auth failure on a response triggers the re-auth hook', async () => {
   await assert.rejects(() => client.listChats());
   assert.equal(notified, true);
 });
+
+test('userInfo resolves the signed-in identity from the envelope', async () => {
+  const { client, calls } = clientFor(() => ({
+    code: 0,
+    data: { name: '张三', open_id: 'ou_me', union_id: 'on_me', user_id: '5d9' },
+  }));
+  const info = await client.userInfo();
+  assert.equal(calls[0].endsWith('/open-apis/authen/v1/user_info'), true);
+  assert.deepEqual(info, { openId: 'ou_me', unionId: 'on_me', userId: '5d9', name: '张三' });
+});
+
+test('listMessages stops paging once maxMessages is reached', async () => {
+  let requests = 0;
+  const { client } = clientFor(() => {
+    requests += 1;
+    // A chat with far more history than the cap: every page is full and
+    // claims more. The cap is what keeps the sender picker bounded.
+    return page(
+      Array.from({ length: 50 }, (_, i) => ({ message_id: `om_${requests}_${i}` })),
+      { has_more: true, page_token: `tok_${requests}` },
+    );
+  });
+  const messages = await client.listMessages({
+    chatId: 'oc_9', startTimeSeconds: 100, maxMessages: 100,
+  });
+  assert.equal(messages.length, 100);
+  assert.equal(requests, 2);
+});

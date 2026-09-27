@@ -44,4 +44,4 @@ Installing from git executes code from the repository at install time **only if*
 the package declares a `prepare` script the user allowlists. This package ships
 its built `lib/` and declares no `prepare`, so a `github:` install runs no
 package code during installation beyond normal dependency resolution. Pin a
-commit or tag (`#v1.0.0`) so a later push cannot change what you install.
+commit or tag (`#v1.1.0`) so a later push cannot change what you install.

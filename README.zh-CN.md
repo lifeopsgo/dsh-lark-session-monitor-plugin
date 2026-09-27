@@ -27,7 +27,7 @@
 需要 **Node.js ≥ 22.6**。
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.0.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.0
 ```
 
 重启 DSH，然后刷新页面。打开 **设置 → 插件 → 飞书会话监听**。
@@ -36,7 +36,7 @@ dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1
 <summary>升级或卸载</summary>
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.0.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.0
 dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 ```
 
@@ -75,6 +75,9 @@ dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 | **Prompt** | 置于消息正文之前一并发送 |
 | **目标工作区** | 目标会话所在的工作区 |
 | **目标会话** | 留空则自动创建 |
+| **过滤自己发送的消息** | 默认关闭；开启后不投递你本人发送的消息 |
+| **仅接收指定发送者** | 默认留空 = 所有发送者；可多选会话中出现过用户/机器人，仅投递其消息 |
+| **也接收 @机器人 的消息** | 默认关闭；开启后 @本应用机器人 的消息即使发送者不在名单内也投递 |
 | **启用** | 该监听是否参与轮询 |
 
 ## 投递机制
@@ -101,11 +104,14 @@ dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 
 **轮询。** 同一监听同时只跑一轮。单条 prompt 最多 **10 条消息**，其余在本次投递后继续。游标只在投递成功后推进，因此投递失败会重读该批消息。
 
+**自己的消息。** 监听可以过滤掉你本人发送的消息；若无法读取你的身份，则照旧投递。
+**消息来源筛选。** 发送者名单把监听收窄到指定发送者（候选来自该会话最近的发言者）；「也接收 @机器人」把它放宽一格：@本应用机器人的消息即使发送者不在名单里也投递——被点名本身就是信号。名单留空 + 开关打开 = 只收 @机器人 的消息；两者都不设即照旧接收全部。机器人身份用应用自身的凭据解析，无需新增授权；解析失败时本轮挂起——不投递也不丢消息，每次轮询自动重试。
+
 ## 隐私
 
 - 仅读取你配置的会话，以及轮询窗口内的消息。
 - App Secret 存在设置文件，用户 token 存在 DSH 的 credentials 服务；两者都不会通过 RPC 返回。
-- 唯一的网络访问是你授权的飞书 API 调用。没有遥测。
+- 唯一的网络访问是你授权的飞书 API 调用：用户 token 读取会话，应用自身凭据解析 @机器人 筛选所需的机器人身份。没有遥测。
 - 消息文本只交给你选定的 DSH 会话。插件不会向飞书回复。
 - 设置端点走 DSH 已认证的 `/api` 通道。`rpcAuthority: loopback` 可额外要求回环 Host 与 Origin。
 

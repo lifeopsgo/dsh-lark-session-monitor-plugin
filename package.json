@@ -1,6 +1,6 @@
 {
   "name": "dsh-lark-session-monitor-plugin",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "DSH plugin that watches Feishu (Lark) conversations with your own user identity and forwards new messages into a DeepSeek Harness session.",
   "keywords": [
     "deepseek-harness",
@@ -42,7 +42,7 @@
     "node": ">=22.6"
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "node scripts/build-host.mjs && node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
     "check": "npm run build && npm test"
   },

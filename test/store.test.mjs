@@ -190,7 +190,13 @@ test('no temp file is left behind after a write', async () => {
 test('the poll interval is clamped to a sane floor', async () => {
   const { store } = await openStore();
   await store.saveApp({ pollIntervalMs: 1000 });
-  assert.equal(store.snapshot().pollIntervalMs, 10_000);
+  assert.equal(store.snapshot().pollIntervalMs, 2_000);
+});
+
+test('a two second poll interval is kept, not clamped', async () => {
+  const { store } = await openStore();
+  await store.saveApp({ pollIntervalMs: 2_000 });
+  assert.equal(store.snapshot().pollIntervalMs, 2_000);
 });
 
 test('an empty secret on save leaves the stored secret intact', async () => {
@@ -263,4 +269,50 @@ test('only a literal true enables pinning', async () => {
     chatId: 'oc_a', prompt: 'p', autoCreateAndPin: 'yes',
   });
   assert.equal(created.autoCreateAndPin, false);
+});
+
+test('skipOwnMessages defaults off and survives a round trip', async () => {
+  const { store } = await openStore();
+  const plain = await store.upsertMonitor({ chatId: 'oc_a', prompt: 'p' });
+  assert.equal(plain.skipOwnMessages, false);
+
+  const skipping = await store.upsertMonitor({
+    chatId: 'oc_b', prompt: 'p', skipOwnMessages: true,
+  });
+  assert.equal(skipping.skipOwnMessages, true);
+
+  // The public view carries it, or the editor cannot show the current mode.
+  const view = publicSettings(store.snapshot()).monitors
+    .find((m) => m.monitorId === skipping.monitorId);
+  assert.equal(view.skipOwnMessages, true);
+});
+
+test('only a literal true skips own messages', async () => {
+  const { store } = await openStore();
+  // A hand-edited or stringly value must not silently turn the filter on.
+  const created = await store.upsertMonitor({
+    chatId: 'oc_a', prompt: 'p', skipOwnMessages: 'yes',
+  });
+  assert.equal(created.skipOwnMessages, false);
+});
+
+test('onlySenderIds keeps unique, non-empty ids and drops everything else', async () => {
+  const { store } = await openStore();
+  const monitor = await store.upsertMonitor({
+    chatId: 'oc_a', prompt: 'p',
+    onlySenderIds: ['ou_1', ' ou_2 ', '', 'ou_1', 42, null, ['ou_3']],
+  });
+  assert.deepEqual(monitor.onlySenderIds, ['ou_1', 'ou_2']);
+  // The public view carries it, or the editor cannot show the selection.
+  const view = publicSettings(store.snapshot()).monitors
+    .find((m) => m.monitorId === monitor.monitorId);
+  assert.deepEqual(view.onlySenderIds, ['ou_1', 'ou_2']);
+});
+
+test('alsoBotMention needs a literal true', async () => {
+  const { store } = await openStore();
+  const off = await store.upsertMonitor({ chatId: 'oc_a', prompt: 'p', alsoBotMention: 'yes' });
+  assert.equal(off.alsoBotMention, false);
+  const on = await store.upsertMonitor({ chatId: 'oc_b', prompt: 'p', alsoBotMention: true });
+  assert.equal(on.alsoBotMention, true);
 });

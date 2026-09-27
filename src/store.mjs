@@ -20,6 +20,9 @@ import { dirname, join } from 'node:path';
 
 const STORE_VERSION = 1;
 
+/** The shortest polling cadence a user may configure, in milliseconds. */
+export const MIN_POLL_INTERVAL_MS = 2_000;
+
 /** Shape one monitor id must have; also used to reject hand-edited values. */
 const MONITOR_ID_PATTERN = /^mon_[0-9a-f]{16}$/;
 
@@ -58,6 +61,16 @@ function normalizeMonitor(input, { existing } = {}) {
   const prompt = nonEmptyString(input.prompt);
   const workspace = nonEmptyString(input.workspace);
   if (!chatId || !prompt) return undefined;
+  // The picker offers ids observed in this conversation, so they are
+  // whatever the chat reads carry as `sender.id`: a user's open_id or an
+  // app's app_id.
+  const onlySenderIds = [];
+  if (Array.isArray(input.onlySenderIds)) {
+    for (const value of input.onlySenderIds) {
+      const id = nonEmptyString(value);
+      if (id && !onlySenderIds.includes(id)) onlySenderIds.push(id);
+    }
+  }
   const monitor = {
     monitorId: isValidMonitorId(input.monitorId) ? input.monitorId : newMonitorId(),
     name: nonEmptyString(input.name) ?? '',
@@ -76,6 +89,25 @@ function normalizeMonitor(input, { existing } = {}) {
      * message" and "one running conversation".
      */
     autoCreateAndPin: input.autoCreateAndPin === true,
+    /**
+     * `false` (default): messages you sent yourself are delivered like
+     * anyone else's. `true`: they are skipped, so the session receives what
+     * other people say without your own echoes.
+     */
+    skipOwnMessages: input.skipOwnMessages === true,
+    /**
+     * Restrict this monitor to specific senders; an empty list means
+     * everyone. Ids round-trip with the picker built from observed
+     * messages.
+     */
+    onlySenderIds,
+    /**
+     * `false` (default): the sender list alone decides. `true`: messages
+     * that @-mention this app's own bot are also accepted, even from a
+     * sender outside the list — being addressed is the signal, not who
+     * typed it. An empty list plus this switch means only @bot messages.
+     */
+    alsoBotMention: input.alsoBotMention === true,
     enabled: input.enabled !== false,
     createdAt: existing?.createdAt ?? Date.now(),
   };
@@ -123,7 +155,7 @@ export function normalizeSettings(input) {
       domain: app.domain === 'lark' ? 'lark' : 'feishu',
     },
     pollIntervalMs: Number.isFinite(source.pollIntervalMs)
-      ? Math.max(10_000, Math.trunc(source.pollIntervalMs))
+      ? Math.max(MIN_POLL_INTERVAL_MS, Math.trunc(source.pollIntervalMs))
       : 30_000,
     monitors: normalizeMonitors(source.monitors),
   };
@@ -241,7 +273,7 @@ export class MonitorStore {
       }
       if (domain !== undefined) draft.app.domain = domain === 'lark' ? 'lark' : 'feishu';
       if (pollIntervalMs !== undefined && Number.isFinite(pollIntervalMs)) {
-        draft.pollIntervalMs = Math.max(10_000, Math.trunc(pollIntervalMs));
+        draft.pollIntervalMs = Math.max(MIN_POLL_INTERVAL_MS, Math.trunc(pollIntervalMs));
       }
       return cloneJson(draft.app);
     });
@@ -337,6 +369,9 @@ export function publicMonitor(monitor) {
     sessionId: monitor.sessionId,
     sessionTitle: monitor.sessionTitle,
     autoCreateAndPin: monitor.autoCreateAndPin === true,
+    skipOwnMessages: monitor.skipOwnMessages === true,
+    onlySenderIds: [...(monitor.onlySenderIds ?? [])],
+    alsoBotMention: monitor.alsoBotMention === true,
     enabled: monitor.enabled !== false,
   };
 }
