@@ -17,11 +17,11 @@
  */
 
 import { Authorizer } from './auth.mjs';
-import { fetchAppBotOpenId } from './bot-identity.mjs';
+import { fetchAppBotIdentity } from './bot-identity.mjs';
 import { SessionDeliverer, HarnessGateway } from './deliver.mjs';
 import { listInventory, listWorkspaceTargets } from './inventory.mjs';
 import { LarkUserClient } from './lark-api.mjs';
-import { distinctSenders } from './normalize.mjs';
+import { applyAppBotName, distinctSenders } from './normalize.mjs';
 import { MonitorRuntime } from './runtime.mjs';
 import { registerSettingsRpc } from './rpc.mjs';
 import { MonitorStore, publicSettings } from './store.mjs';
@@ -143,6 +143,29 @@ export function apply(ctx, config) {
     });
   };
 
+  /**
+   * The configured app's own bot identity, cached per process.
+   *
+   * Two consumers share it: the @机器人 switch needs the open_id (mentions
+   * carry open_id, the settings hold an appId), and the sender picker needs
+   * the name — chat reads never name app senders, so the app's own bot
+   * would otherwise appear as a bare `cli_…` App ID. Failures are not
+   * cached, so a fixed App Secret recovers on the next read.
+   */
+  const botIdentity = { value: null };
+  const appBotIdentity = async (signal) => {
+    if (botIdentity.value) return botIdentity.value;
+    const app = store.snapshot().app;
+    const identity = await fetchAppBotIdentity({
+      appId: app.appId,
+      appSecret: app.appSecret,
+      domain: app.domain,
+      signal,
+    });
+    if (identity) botIdentity.value = identity;
+    return identity;
+  };
+
   const start = () => {
     if (runtime.current) return;
     const instance = new MonitorRuntime({
@@ -151,19 +174,9 @@ export function apply(ctx, config) {
       getClient: async () => clientFor(),
       getIntervalMs: intervalReader(store),
       logger,
-      // The @机器人 acceptance path needs the app bot's own open_id; the
-      // stored appId/appSecret pair is the only bridge to it. Fetched
-      // lazily, at most once per process, and only when a monitor uses the
-      // switch.
-      getBotOpenId: ({ signal }) => {
-        const app = store.snapshot().app;
-        return fetchAppBotOpenId({
-          appId: app.appId,
-          appSecret: app.appSecret,
-          domain: app.domain,
-          signal,
-        });
-      },
+      // The @机器人 acceptance path needs the app bot's own open_id. See
+      // appBotIdentity above; fetched lazily, at most once per process.
+      getBotOpenId: async ({ signal }) => (await appBotIdentity(signal))?.openId,
     });
     instance.start();
     runtime.current = instance;
@@ -284,7 +297,16 @@ export function apply(ctx, config) {
         maxMessages: 200,
         signal,
       });
-      return { senders: distinctSenders(messages) };
+      let senders = distinctSenders(messages);
+      // The list API does not name app senders; fill in the configured
+      // app's own bot when it appears — usually exactly the bot being
+      // tested. Best effort: a failed lookup must not break the picker.
+      try {
+        senders = applyAppBotName(senders, store.snapshot().app.appId, await appBotIdentity(signal));
+      } catch {
+        // Keep the id-only label; the settings page shows the bot's name.
+      }
+      return { senders };
     },
 
     async 'monitor.save'(payload) {

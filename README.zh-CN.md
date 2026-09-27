@@ -27,7 +27,7 @@
 需要 **Node.js ≥ 22.6**。
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.1
 ```
 
 重启 DSH，然后刷新页面。打开 **设置 → 插件 → 飞书会话监听**。
@@ -36,7 +36,7 @@ dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1
 <summary>升级或卸载</summary>
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.1
 dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 ```
 
@@ -76,7 +76,7 @@ dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 | **目标工作区** | 目标会话所在的工作区 |
 | **目标会话** | 留空则自动创建 |
 | **过滤自己发送的消息** | 默认关闭；开启后不投递你本人发送的消息 |
-| **仅接收指定发送者** | 默认留空 = 所有发送者；可多选会话中出现过用户/机器人，仅投递其消息 |
+| **仅接收指定发送者** | 默认留空 = 所有发送者；可多选会话中出现过的用户/机器人，仅投递其消息（读不到名称的机器人以 App ID 显示） |
 | **也接收 @机器人 的消息** | 默认关闭；开启后 @本应用机器人 的消息即使发送者不在名单内也投递 |
 | **启用** | 该监听是否参与轮询 |
 

@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  applyAppBotName,
   composePrompt,
   distinctSenders,
   isAppSender,
@@ -180,6 +181,25 @@ test('mentionsId recognizes bot mentions in the mentions array and post at-nodes
   assert.equal(mentionsId(post, 'ou_other'), false);
 
   assert.equal(mentionsId(message('text', { text: 'hi' }), 'ou_bot'), false);
+});
+
+test('applyAppBotName fills the configured bot name into the picker list', () => {
+  const senders = [
+    { id: 'ou_1', name: '张三', type: 'user' },
+    { id: 'cli_x', name: '', type: 'bot' },
+    { id: 'cli_y', name: '', type: 'bot' },
+  ];
+  const named = applyAppBotName(senders, 'cli_x', { openId: 'ou_bot', name: ' 智能助手 ' });
+  assert.deepEqual(named, [
+    { id: 'ou_1', name: '张三', type: 'user' },
+    { id: 'cli_x', name: '智能助手', type: 'bot' },
+    { id: 'cli_y', name: '', type: 'bot' },
+  ]);
+  // Best effort throughout: no identity, no configured app, or a blank
+  // name leaves the list untouched rather than guessing.
+  assert.equal(applyAppBotName(senders, 'cli_x', undefined), senders);
+  assert.equal(applyAppBotName(senders, '', { openId: 'ou_bot', name: '智能助手' }), senders);
+  assert.equal(applyAppBotName(senders, 'cli_y', { openId: 'ou_bot', name: '' }), senders);
 });
 
 test('distinctSenders dedupes by id, types apps as bots, and keeps names', () => {

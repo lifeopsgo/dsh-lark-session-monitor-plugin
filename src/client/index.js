@@ -295,6 +295,10 @@ function MonitorEditor({ draft, setDraft, chats, targets, senders, onSave, onCan
   const update = (patch) => setDraft({ ...draft, ...patch });
   const [chatKind, setChatKind] = React.useState('all');
   const workspaceSessions = targets.find((w) => w.path === draft.workspace)?.sessions ?? [];
+  // A p2p chat is named after its counterpart, so a bot's display name is
+  // right there — covering third-party bots the app identity cannot reach.
+  const chat = chats.find((c) => c.chatId === draft.chatId);
+  const chatIsP2P = chat?.chatType === 'p2p';
 
   const visibleChats = React.useMemo(() => {
     if (chatKind === 'all') return chats;
@@ -402,7 +406,7 @@ function MonitorEditor({ draft, setDraft, chats, targets, senders, onSave, onCan
                     }),
                   }),
                   h('span', { className: 'lsm-hint' },
-                    `${sender.name || sender.id}（${sender.type === 'bot' ? '机器人' : '用户'}）`))))),
+                    `${sender.type === 'bot' && chatIsP2P && chat?.name ? chat.name : (sender.name || sender.id)}（${sender.type === 'bot' ? '机器人' : '用户'}）`))))),
     h('label', { className: 'lsm-inline' },
       h('input', {
         type: 'checkbox', checked: draft.alsoBotMention === true,

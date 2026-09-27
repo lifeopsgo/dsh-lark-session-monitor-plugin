@@ -227,6 +227,22 @@ export function distinctSenders(messages) {
   return [...byId.values()];
 }
 
+/**
+ * Fill the configured app bot's display name into a picker list.
+ *
+ * Chat reads never name app senders, so the app's own bot — usually
+ * exactly the bot being tested — would otherwise show as a bare `cli_…`
+ * App ID. The lookup is the caller's business; this only applies it where
+ * it fits, and never guesses.
+ */
+export function applyAppBotName(senders, appId, identity) {
+  const name = typeof identity?.name === 'string' ? identity.name.trim() : '';
+  if (!appId || !name) return senders;
+  return senders.map((sender) => (
+    sender?.id === appId && !sender.name ? { ...sender, name } : sender
+  ));
+}
+
 /** Display name for a message's sender, falling back to the raw id. */
 export function senderLabel(message) {
   const sender = message?.sender;

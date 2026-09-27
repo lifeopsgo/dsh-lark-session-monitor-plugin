@@ -4,7 +4,8 @@
  * The "@机器人" filter needs to recognize mentions of the app itself, and
  * mentions carry open_id — while the settings hold an appId/appSecret pair.
  * The only bridge is the app-identity endpoints: mint a tenant_access_token
- * from the stored credentials, then read the bot's open_id from bot/v3/info.
+ * from the stored credentials, then read the bot's open_id and name from
+ * bot/v3/info.
  * Neither endpoint requires a permission; the app merely has to have the bot
  * capability enabled.
  *
@@ -29,13 +30,17 @@ function failFor(body, fallback) {
 }
 
 /**
- * The app bot's open_id, or undefined when the app has no bot identity.
+ * The app bot's identity — `{ openId, name }` — or undefined when the app
+ * has no bot identity.
  *
- * Missing credentials answer undefined without touching the network. A
- * Feishu-side failure throws with the platform's own message so the monitor
- * can surface it as its poll error verbatim.
+ * `openId` is the id @-mentions carry. `name` exists because chat reads
+ * never name app senders, so without it the picker would show the app's
+ * own bot as a bare `cli_…` App ID. Missing credentials answer undefined
+ * without touching the network. A Feishu-side failure throws with the
+ * platform's own message so the monitor can surface it as its poll error
+ * verbatim.
  */
-export async function fetchAppBotOpenId({
+export async function fetchAppBotIdentity({
   appId, appSecret, domain = 'feishu', fetchImpl = fetch, signal,
 } = {}) {
   if (!appId || !appSecret) return undefined;
@@ -61,6 +66,9 @@ export async function fetchAppBotOpenId({
   });
   const infoBody = await readJson(infoResponse);
   if (infoBody?.code !== 0) throw failFor(infoBody, 'feishu-bot-info-failed');
-  const openId = infoBody?.bot?.open_id;
-  return typeof openId === 'string' && openId ? openId : undefined;
+  const bot = infoBody?.bot ?? {};
+  const openId = typeof bot.open_id === 'string' && bot.open_id ? bot.open_id : '';
+  const name = typeof bot.app_name === 'string' ? bot.app_name.trim() : '';
+  if (!openId && !name) return undefined;
+  return { openId: openId || undefined, name };
 }

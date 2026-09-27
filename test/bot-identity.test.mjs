@@ -2,14 +2,15 @@
  * Unit tests for resolving the app bot's identity.
  *
  * The contract under test: the stored appId/appSecret pair is exchanged for
- * the bot's open_id — the id @-mentions carry — with failures surfacing the
+ * the bot's open_id (the id @-mentions carry) and display name (the picker
+ * shows it; chat reads never name app senders), with failures surfacing the
  * platform's own message instead of a generic one.
  */
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { fetchAppBotOpenId } from '../src/bot-identity.mjs';
+import { fetchAppBotIdentity } from '../src/bot-identity.mjs';
 
 /** Fetch double answering by URL fragment, recording every call. */
 function fetchAnswering(entries) {
@@ -24,15 +25,15 @@ function fetchAnswering(entries) {
   return { calls, fetchImpl };
 }
 
-test('exchanges the app credentials for the bot open id', async () => {
+test('exchanges the app credentials for the bot identity', async () => {
   const { calls, fetchImpl } = fetchAnswering([
     ['tenant_access_token/internal', { code: 0, tenant_access_token: 't-1', expire: 7200 }],
-    ['bot/v3/info', { code: 0, bot: { open_id: 'ou_bot', app_name: '助手' } }],
+    ['bot/v3/info', { code: 0, bot: { open_id: 'ou_bot', app_name: '智能助手' } }],
   ]);
-  const openId = await fetchAppBotOpenId({
+  const identity = await fetchAppBotIdentity({
     appId: 'cli_x', appSecret: 'sec', domain: 'feishu', fetchImpl,
   });
-  assert.equal(openId, 'ou_bot');
+  assert.deepEqual(identity, { openId: 'ou_bot', name: '智能助手' });
   assert.equal(calls.length, 2);
   assert.ok(calls[0].url.includes('open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal'));
   assert.equal(JSON.parse(calls[0].init.body).app_id, 'cli_x');
@@ -44,7 +45,7 @@ test('the lark brand uses the larksuite host', async () => {
     ['tenant_access_token/internal', { code: 0, tenant_access_token: 't-1' }],
     ['bot/v3/info', { code: 0, bot: { open_id: 'ou_bot' } }],
   ]);
-  await fetchAppBotOpenId({ appId: 'cli_x', appSecret: 'sec', domain: 'lark', fetchImpl });
+  await fetchAppBotIdentity({ appId: 'cli_x', appSecret: 'sec', domain: 'lark', fetchImpl });
   assert.ok(calls[0].url.includes('open.larksuite.com'));
 });
 
@@ -53,17 +54,17 @@ test('an app without a bot identity resolves to undefined', async () => {
     ['tenant_access_token/internal', { code: 0, tenant_access_token: 't-1' }],
     ['bot/v3/info', { code: 0, bot: {} }],
   ]);
-  const openId = await fetchAppBotOpenId({ appId: 'cli_x', appSecret: 'sec', fetchImpl });
-  assert.equal(openId, undefined);
+  const identity = await fetchAppBotIdentity({ appId: 'cli_x', appSecret: 'sec', fetchImpl });
+  assert.equal(identity, undefined);
 });
 
 test('a missing credential pair skips the network entirely', async () => {
   let called = false;
-  const openId = await fetchAppBotOpenId({
+  const identity = await fetchAppBotIdentity({
     appId: '', appSecret: '',
     fetchImpl: async () => { called = true; return new Response('{}'); },
   });
-  assert.equal(openId, undefined);
+  assert.equal(identity, undefined);
   assert.equal(called, false);
 });
 
@@ -72,7 +73,7 @@ test('a non-zero envelope surfaces the Feishu message', async () => {
     ['tenant_access_token/internal', { code: 99991661, msg: 'App Secret 不正确' }],
   ]);
   await assert.rejects(
-    () => fetchAppBotOpenId({ appId: 'cli_x', appSecret: 'bad', fetchImpl }),
+    () => fetchAppBotIdentity({ appId: 'cli_x', appSecret: 'bad', fetchImpl }),
     /App Secret 不正确/,
   );
 });

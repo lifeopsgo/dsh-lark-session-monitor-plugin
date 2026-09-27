@@ -26,7 +26,7 @@ A **DeepSeek Harness (DSH)** plugin that reads Feishu conversations with **your 
 Requires **Node.js ≥ 22.6**.
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.1
 ```
 
 Restart DSH, then refresh the page. Open **Settings → Plugins → 飞书会话监听**.
@@ -35,7 +35,7 @@ Restart DSH, then refresh the page. Open **Settings → Plugins → 飞书会话
 <summary>Upgrade or remove</summary>
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v1.1.1
 dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 ```
 
@@ -75,7 +75,7 @@ Click **新建监听**:
 | **目标工作区** | Where the target session lives |
 | **目标会话** | Leave empty to auto-create |
 | **Skip own messages** | Off by default; when on, messages you sent yourself are not delivered |
-| **Senders** | Empty by default = all senders; pick specific users or bots to receive only their messages |
+| **Senders** | Empty by default = all senders; pick specific users or bots to receive only their messages (a bot with no readable name shows as its App ID) |
 | **Also @bot mentions** | Off by default; when on, messages that @-mention this app's bot are delivered even from senders outside the whitelist |
 | **启用** | Whether this monitor polls |
 
