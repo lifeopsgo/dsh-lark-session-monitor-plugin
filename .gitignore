@@ -5,7 +5,7 @@ node_modules/
 # Build output.
 #
 # NOTE: lib/ is deliberately NOT ignored. This plugin is installed straight
-# from a git tag (`dsh plugin --profile <p> add github:lifeopsgo/dsh-lark-session-monitor#vX.Y.Z`),
+# from a git tag (`dsh plugin --profile <p> add github:lifeopsgo/dsh-lark-session-monitor-plugin#vX.Y.Z`),
 # and a git-hosted install runs no build step unless the package declares a
 # `prepare` script AND the user allowlists it by hash in their profile's
 # pnpm-workspace.yaml. Shipping the built lib/ in the tag keeps installation
