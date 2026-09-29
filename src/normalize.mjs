@@ -27,6 +27,111 @@ function parseContent(raw) {
   }
 }
 
+/**
+ * Inline `lark_md` markers become plain annotations.
+ *
+ * `<a href="u">text</a>` renders as `text (u)` — the link is delivered as
+ * text, never fetched — and `<at id=..>name</at>` renders as `@name`.
+ */
+function inlineLarkMd(content) {
+  return content
+    .replace(/<a\s+href=(?:"([^"]*)"|'([^']*)')[^>]*>([\s\S]*?)<\/a>/gi, (_m, d, s, text) => {
+      const href = d ?? s ?? '';
+      return href ? `${text} (${href})` : text;
+    })
+    .replace(/<at\s+[^>]*>([\s\S]*?)<\/at>/gi, (_m, name) => `@${name.trim() || '某人'}`);
+}
+
+/** The readable text of a card text leaf (`plain_text`, `lark_md`, `markdown`). */
+function cardTextOf(node) {
+  if (!isRecord(node)) return '';
+  if (typeof node.content !== 'string') return '';
+  const raw = node.tag === 'lark_md' || node.tag === 'md' ? inlineLarkMd(node.content) : node.content;
+  return raw.trim();
+}
+
+/**
+ * Flatten a card's element blocks into readable lines.
+ *
+ * Covers card JSON 1.0 (`elements`), the 2.0 send format (`i18n_elements`),
+ * and the 2.0 builder format (`body.elements`): text blocks, fields, notes,
+ * dividers, images, action buttons with their links, and column layouts.
+ * Unknown block kinds fall back to harvesting their text leaves, so a card
+ * DSL the renderer has never seen still yields whatever it says.
+ */
+function flattenCardBlocks(elements, out) {
+  for (const block of Array.isArray(elements) ? elements : []) {
+    if (!isRecord(block)) continue;
+    if (block.tag === 'div') {
+      const text = cardTextOf(block.text);
+      if (text) out.push(text);
+      for (const field of Array.isArray(block.fields) ? block.fields : []) {
+        const fieldText = cardTextOf(isRecord(field) ? field.text : undefined);
+        if (fieldText) out.push(fieldText);
+      }
+    } else if (block.tag === 'markdown' || block.tag === 'md') {
+      const text = cardTextOf(block);
+      if (text) out.push(text);
+    } else if (block.tag === 'note') {
+      const parts = [];
+      flattenCardBlocks(block.elements, parts);
+      if (parts.length) out.push(parts.join(' · '));
+    } else if (block.tag === 'hr') {
+      out.push('———');
+    } else if (block.tag === 'img') {
+      const alt = cardTextOf(block.alt);
+      out.push(alt ? `[图片:${alt}]` : '[图片]');
+    } else if (block.tag === 'action') {
+      for (const item of Array.isArray(block.actions) ? block.actions : []) {
+        if (!isRecord(item)) continue;
+        const text = cardTextOf(item.text) || (typeof item.text === 'string' ? item.text : '');
+        const url = typeof item.url === 'string' ? item.url : '';
+        if (text && url) out.push(`${text} (${url})`);
+        else if (text) out.push(text);
+        else if (url) out.push(url);
+      }
+    } else if (block.tag === 'column_set' || block.tag === 'column') {
+      const columns = Array.isArray(block.columns) ? block.columns : [];
+      if (columns.length) {
+        for (const column of columns) {
+          if (isRecord(column)) flattenCardBlocks(column.elements, out);
+        }
+      } else {
+        flattenCardBlocks(block.elements, out);
+      }
+    } else {
+      // Unknown block: harvest any text leaves it nests, without leaking
+      // the block's own DSL keys.
+      const harvested = [];
+      const walk = (value) => {
+        if (Array.isArray(value)) { value.forEach(walk); return; }
+        if (!isRecord(value)) return;
+        if (typeof value.tag === 'string' && (value.tag === 'plain_text' || value.tag === 'lark_md')) {
+          const text = cardTextOf(value);
+          if (text) harvested.push(text);
+          return;
+        }
+        for (const child of Object.values(value)) walk(child);
+      };
+      walk(block);
+      if (harvested.length) out.push(harvested.join(' · '));
+    }
+  }
+  return out;
+}
+
+/** The element list a card body offers, by its layout variant. */
+function cardElementLists(content) {
+  if (Array.isArray(content?.elements)) return content.elements;
+  if (isRecord(content?.i18n_elements)) {
+    const locale = content.i18n_elements.zh_cn
+      ?? Object.values(content.i18n_elements).find((v) => Array.isArray(v));
+    if (Array.isArray(locale)) return locale;
+  }
+  if (isRecord(content?.body) && Array.isArray(content.body.elements)) return content.body.elements;
+  return [];
+}
+
 /** Concatenate the `text` leaves of a post's nested element tree. */
 function flattenPostElements(elements) {
   const lines = [];
@@ -93,11 +198,11 @@ export function renderMessage(message) {
 
   if (msgType === 'interactive') {
     // Card payloads are a rendering DSL; a readable fallback beats a JSON dump.
-    const title = typeof content?.header?.title?.content === 'string'
-      ? content.header.title.content.trim()
-      : '';
-    const summary = typeof content?.summary?.content === 'string' ? content.summary.content.trim() : '';
-    const text = [title, summary].filter(Boolean).join('\n');
+    const title = cardTextOf(content?.header?.title) || (typeof content?.header?.title?.content === 'string'
+      ? content.header.title.content.trim() : '');
+    const summary = cardTextOf(content?.summary);
+    const lines = flattenCardBlocks(cardElementLists(content), []);
+    const text = [title, summary, ...lines].filter(Boolean).join('\n');
     return text ? { text, kind: 'interactive' }
       : { text: '[卡片消息]', kind: 'interactive' };
   }

@@ -73,6 +73,16 @@ test('listChats keeps paging until has_more is false', async () => {
   assert.equal(new URL(calls[1]).searchParams.get('page_token'), 't1');
 });
 
+test('listMessages passes the card content format through, and omits it by default', async () => {
+  const { client, calls } = clientFor(() => page([]));
+  await client.listMessages({
+    chatId: 'oc_1', startTimeSeconds: 1, endTimeSeconds: 2, cardMsgContentType: 'user_card_content',
+  });
+  await client.listMessages({ chatId: 'oc_1', startTimeSeconds: 1, endTimeSeconds: 2 });
+  assert.equal(new URL(calls[0]).searchParams.get('card_msg_content_type'), 'user_card_content');
+  assert.equal(new URL(calls[1]).searchParams.get('card_msg_content_type'), null);
+});
+
 test('a non-zero Feishu code is an error even on HTTP 200', async () => {
   const { client } = clientFor(() => ({ code: 99991663, msg: 'token expired' }));
   await assert.rejects(() => client.listChats(), (error) => {

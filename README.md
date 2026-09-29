@@ -86,12 +86,12 @@ New messages are delivered as one prompt:
 ```text
 <your prompt>
 
-[发送者] 消息正文
+[发送者] [消息ID] 消息正文
 
-[发送者] 第二条消息
+[发送者] [消息ID] 第二条消息
 ```
 
-**Message rendering.** Only readable text is delivered; raw Feishu JSON never reaches the model. Text uses its own text, posts are flattened, cards contribute title and summary, and images/files/audio/video become a label such as `[图片]`. Messages with nothing to say are skipped.
+**Message rendering.** Only readable text is delivered; raw Feishu JSON never reaches the model. Text uses its own text, posts are flattened, and cards are read from their original card JSON (`card_msg_content_type=user_card_content`) and rendered as readable lines — headings, text, notes, buttons with their links. Links are delivered as plain URLs, never fetched. Images/files/audio/video become a label such as `[图片]`. Messages with nothing to say are skipped. Each delivered line carries the Feishu message id, so a session can reference the exact message.
 
 **Target session.** The `目标会话` field decides where messages land:
 

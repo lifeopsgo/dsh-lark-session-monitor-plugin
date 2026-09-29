@@ -63,14 +63,61 @@ test('a post with code blocks keeps the code readable', () => {
   assert.ok(rendered.text.includes('const a = 1;'));
 });
 
-test('an interactive card yields its title and summary, not its DSL', () => {
+test('an interactive card yields its title, summary, and block text', () => {
   const rendered = renderMessage(message('interactive', {
     header: { title: { content: '构建完成' } },
     summary: { content: '全部 12 项通过' },
-    elements: [{ tag: 'button', text: '查看' }],
+    elements: [{ tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '查看' } }] }],
   }));
-  assert.equal(rendered.text, '构建完成\n全部 12 项通过');
+  assert.equal(rendered.text, '构建完成\n全部 12 项通过\n查看');
   assert.ok(!rendered.text.includes('elements'));
+});
+
+test('a 1.0 card body renders div text, fields, note, buttons, and images', () => {
+  const rendered = renderMessage(message('interactive', {
+    elements: [
+      { tag: 'div', text: { tag: 'lark_md', content: '发布 <a href=\"https://ci.example.com/1\">流水线 #1</a> 完成' } },
+      { tag: 'div', fields: [
+        { is_short: true, text: { tag: 'plain_text', content: '环境：生产' } },
+        { is_short: true, text: { tag: 'plain_text', content: '耗时：3 分钟' } },
+      ] },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: '来自 CI 机器人' }] },
+      { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '查看日志' }, url: 'https://ci.example.com/log' }] },
+      { tag: 'hr' },
+      { tag: 'img', img_key: 'img_v2_abc', alt: { tag: 'plain_text', content: '构建图' } },
+    ],
+  }));
+  assert.equal(rendered.kind, 'interactive');
+  assert.ok(rendered.text.includes('发布 流水线 #1 (https://ci.example.com/1) 完成'), rendered.text);
+  assert.ok(rendered.text.includes('环境：生产'));
+  assert.ok(rendered.text.includes('耗时：3 分钟'));
+  assert.ok(rendered.text.includes('来自 CI 机器人'));
+  assert.ok(rendered.text.includes('查看日志 (https://ci.example.com/log)'));
+  assert.ok(rendered.text.includes('[图片:构建图]'));
+  assert.ok(!rendered.text.includes('lark_md'));
+  assert.ok(!rendered.text.includes('img_key'));
+});
+
+test('a 2.0 card renders i18n_elements and builder body.elements', () => {
+  const i18n = renderMessage(message('interactive', {
+    schema: '2.0',
+    i18n_elements: { zh_cn: [
+      { tag: 'markdown', content: '**告警**：CPU 90%' },
+      { tag: 'column_set', columns: [{ tag: 'column', elements: [{ tag: 'markdown', content: '主机 A' }] }] },
+    ] },
+  }));
+  assert.ok(i18n.text.includes('**告警**：CPU 90%'), i18n.text);
+  assert.ok(i18n.text.includes('主机 A'));
+
+  const builder = renderMessage(message('interactive', {
+    schema: '2.0',
+    header: { title: { tag: 'plain_text', content: '工单' } },
+    body: { elements: [
+      { tag: 'div', text: { tag: 'lark_md', content: '优先级 P0 <at id=\"ou_1\">张三</at>' } },
+    ] },
+  }));
+  assert.ok(builder.text.includes('工单'), builder.text);
+  assert.ok(builder.text.includes('优先级 P0 @张三'));
 });
 
 test('a card with no readable text degrades to a label', () => {

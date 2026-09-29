@@ -218,6 +218,9 @@ export class MonitorRuntime {
         // second so a message sharing the cursor's second is not skipped.
         startTimeSeconds: Math.max(0, Math.floor(startTimeMs / 1000) - 1),
         endTimeSeconds: Math.floor(this.#now() / 1000) + 1,
+        // Card messages read back as a stripped projection by default; ask
+        // for the original card JSON so cards can be rendered as content.
+        cardMsgContentType: 'user_card_content',
         signal,
       });
       this.#setState(latest.monitorId, { lastPollAt: this.#now(), lastError: null });
@@ -305,12 +308,17 @@ export class MonitorRuntime {
     });
   }
 
-  /** Render one message, prefixing the sender so the prompt has provenance. */
+  /**
+   * Render one message, prefixing sender and Feishu message id so the
+   * prompt carries provenance — the id is what makes a message referenceable
+   * (replying, quoting, marking done) from the session side.
+   */
   #format(monitor, message) {
     const rendered = renderMessage(message);
     if (!rendered) return undefined;
     const who = isAppSender(message) ? `${senderLabel(message)}（机器人）` : senderLabel(message);
-    return `[${who}] ${rendered.text}`;
+    const id = typeof message?.message_id === 'string' && message.message_id ? message.message_id : '';
+    return id ? `[${who}] [${id}] ${rendered.text}` : `[${who}] ${rendered.text}`;
   }
 
   /**

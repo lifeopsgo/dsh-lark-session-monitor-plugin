@@ -78,7 +78,7 @@ function fakeClient(messages, { identity, identityError } = {}) {
   return client;
 }
 
-function feishuMessage({ id, text, timeMs, sender = '张三', senderType = 'user', type = 'text', senderId, mentions }) {
+function feishuMessage({ id, text, timeMs, sender = '张三', senderType = 'user', type = 'text', senderId, mentions, content }) {
   return {
     message_id: id,
     msg_type: type,
@@ -90,7 +90,7 @@ function feishuMessage({ id, text, timeMs, sender = '张三', senderType = 'user
       ...(senderId ? { sender_id: { open_id: senderId } } : {}),
     },
     ...(mentions ? { mentions } : {}),
-    body: { content: JSON.stringify({ text }) },
+    body: { content: JSON.stringify(content ?? { text }) },
   };
 }
 
@@ -149,7 +149,7 @@ test('new messages are delivered and the cursor advances past them', async () =>
   });
   await runtime.poll();
   assert.equal(deliverer.batches.length, 1);
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 第一条', '[张三] 第二条']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 第一条', '[张三] [om_2] 第二条']);
   assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
   assert.equal(store.state[0].cursor.lastCreateTimeMs, 1_700_000_001_000);
 });
@@ -163,7 +163,7 @@ test('the prompt is composed with the message under it', async () => {
   });
   // Assert on what the deliverer received; composePrompt is unit-tested apart.
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 正文']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 正文']);
 });
 
 test('an already-delivered message at the same second is not re-delivered', async () => {
@@ -179,7 +179,7 @@ test('an already-delivered message at the same second is not re-delivered', asyn
   });
   await runtime.poll();
   assert.equal(deliverer.batches.length, 1);
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 新的']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_new] 新的']);
 });
 
 test('messages older than the cursor are ignored entirely', async () => {
@@ -244,7 +244,26 @@ test('app senders are labelled as bots in the delivered text', async () => {
   })];
   const { runtime } = runtimeFor({ monitors: [monitor()], messages, deliverer });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[智能纪要助手（机器人）] 纪要链接']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['[智能纪要助手（机器人）] [om_1] 纪要链接']);
+});
+
+test('card messages are read with their original JSON and delivered as content', async () => {
+  const deliverer = fakeDeliverer();
+  const messages = [feishuMessage({
+    id: 'om_card', type: 'interactive', timeMs: 1_700_000_000_000,
+    content: {
+      elements: [
+        { tag: 'div', text: { tag: 'lark_md', content: '构建失败：<a href="https://ci.example.com/1">流水线</a>' } },
+      ],
+    },
+  })];
+  const { runtime, client } = runtimeFor({ monitors: [monitor()], messages, deliverer });
+  await runtime.poll();
+  assert.equal(client.calls[0].cardMsgContentType, 'user_card_content');
+  assert.deepEqual(
+    deliverer.batches[0].bodies,
+    ['[张三] [om_card] 构建失败：流水线 (https://ci.example.com/1)'],
+  );
 });
 
 test('disabled monitors are never polled', async () => {
@@ -342,7 +361,7 @@ test('skipOwnMessages drops your own messages and delivers the rest', async () =
     deliverer, client,
   });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[同事] 别人的']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['[同事] [om_1] 别人的']);
   // The cursor must pass the skipped message, or it is re-read every poll.
   assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
 });
@@ -368,7 +387,7 @@ test('own messages are delivered when the filter is off, and no identity is fetc
   const client = fakeClient(messages, { identity });
   const { runtime } = runtimeFor({ monitors: [monitor()], deliverer, client });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 我的']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 我的']);
   assert.equal(client.userInfoCalls, 0);
 });
 
@@ -383,7 +402,7 @@ test('a failed identity fetch fails open instead of dropping messages', async ()
     logger: { warn: (...args) => warnings.push(args), error: () => {} },
   });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 我的']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 我的']);
   assert.ok(warnings.some((args) => /identity/.test(String(args[0]))));
 });
 
@@ -420,7 +439,7 @@ test('onlySenderIds delivers just the whitelisted senders', async () => {
     messages, deliverer,
   });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 白名单内']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 白名单内']);
   // The cursor passes the skipped sender's message, so it is not re-read.
   assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
 });
@@ -438,7 +457,7 @@ test('alsoBotMention with an empty sender list means only @bot messages', async 
     getBotOpenId: async () => { botIdCalls += 1; return 'ou_bot'; },
   });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 叫我']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 叫我']);
   assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
   // The bot identity is cached for the process; a second poll does not re-fetch.
   await runtime.poll();
@@ -462,7 +481,7 @@ test('an @bot message is delivered even when its sender is not whitelisted', asy
   await runtime.poll();
   // Both acceptance paths, in conversation order: the whitelisted sender,
   // and the @bot mention from outside the whitelist.
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] 白名单内的普通消息', '[李四] 路人点名机器人']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 白名单内的普通消息', '[李四] [om_2] 路人点名机器人']);
   assert.equal(store.state[0].cursor.lastMessageId, 'om_3');
 });
 
@@ -482,7 +501,7 @@ test('the mention path does not resurrect own messages', async () => {
   await runtime.poll();
   // skipOwnMessages still wins over the mention path: only the colleague's
   // @bot message is delivered, the user's own test ping is not.
-  assert.deepEqual(deliverer.batches[0].bodies, ['[李四] 同事@机器人']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['[李四] [om_2] 同事@机器人']);
 });
 
 test('a missing bot identity holds the round instead of failing open', async () => {

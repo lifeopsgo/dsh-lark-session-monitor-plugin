@@ -154,8 +154,12 @@ export class LarkUserClient {
    * the first poll would page through the conversation's entire history.
    * `maxMessages` bounds the read for callers that only need a sample —
    * the sender picker stops paging once it has enough.
+   *
+   * `cardMsgContentType` — pass `'user_card_content'` to receive card
+   * messages as their original JSON (1.0 or 2.0 structure) instead of the
+   * receive-time projection, which drops most of a card's content.
    */
-  async listMessages({ chatId, startTimeSeconds, endTimeSeconds, maxMessages, signal }) {
+  async listMessages({ chatId, startTimeSeconds, endTimeSeconds, maxMessages, cardMsgContentType, signal }) {
     const messages = [];
     let pageToken;
     for (let page = 0; page < 20; page += 1) {
@@ -168,6 +172,7 @@ export class LarkUserClient {
           sort_type: 'ByCreateTimeAsc',
           page_size: MESSAGE_PAGE_SIZE,
           page_token: pageToken,
+          ...(cardMsgContentType ? { card_msg_content_type: cardMsgContentType } : {}),
         },
         signal,
       });
