@@ -275,6 +275,35 @@ test('blocked keywords match the rendered text of cards too', async () => {
   assert.equal(deliverer.batches.length, 0);
 });
 
+test('an empty allowed list delivers everything; a non-empty one gates on hits', async () => {
+  const deliverer = fakeDeliverer();
+  const messages = [
+    feishuMessage({ id: 'om_1', text: '会议纪要链接', timeMs: 1_700_000_000_000 }),
+    feishuMessage({ id: 'om_2', text: '闲聊一句', timeMs: 1_700_000_001_000 }),
+  ];
+  // Empty allowlist = no restriction.
+  const open = runtimeFor({ monitors: [monitor({ allowedKeywords: [] })], messages, deliverer });
+  await open.runtime.poll();
+  assert.equal(deliverer.batches[0].bodies.length, 2);
+
+  const gated = fakeDeliverer();
+  const { runtime } = runtimeFor({
+    monitors: [monitor({ allowedKeywords: ['纪要', '周报'] })], messages, deliverer: gated,
+  });
+  await runtime.poll();
+  assert.deepEqual(gated.batches[0].bodies, ['[张三] [om_1] 会议纪要链接']);
+});
+
+test('the blacklist wins over the allowlist for the same message', async () => {
+  const deliverer = fakeDeliverer();
+  const messages = [feishuMessage({ id: 'om_1', text: '会议纪要：广告版本', timeMs: 1_700_000_000_000 })];
+  const { runtime } = runtimeFor({
+    monitors: [monitor({ allowedKeywords: ['纪要'], blockedKeywords: ['广告'] })], messages, deliverer,
+  });
+  await runtime.poll();
+  assert.equal(deliverer.batches.length, 0);
+});
+
 test('card messages are read with their original JSON and delivered as content', async () => {
   const deliverer = fakeDeliverer();
   const messages = [feishuMessage({

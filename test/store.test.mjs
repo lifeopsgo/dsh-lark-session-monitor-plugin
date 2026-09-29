@@ -323,6 +323,19 @@ test('blockedKeywords keeps unique non-empty strings and drops everything else',
   assert.deepEqual(view.blockedKeywords, ['周报', '报销']);
 });
 
+test('allowedKeywords keeps unique non-empty strings and drops everything else', async () => {
+  const { store } = await openStore();
+  const monitor = await store.upsertMonitor({
+    chatId: 'oc_a', prompt: 'p',
+    allowedKeywords: [' 纪要 ', '', '纪要', 42, null, ['周报'], '报销'],
+  });
+  // The nested array is garbage and is dropped like the other non-strings.
+  assert.deepEqual(monitor.allowedKeywords, ['纪要', '报销']);
+  const view = publicSettings(store.snapshot()).monitors
+    .find((m) => m.monitorId === monitor.monitorId);
+  assert.deepEqual(view.allowedKeywords, ['纪要', '报销']);
+});
+
 test('alsoBotMention needs a literal true', async () => {
   const { store } = await openStore();
   const off = await store.upsertMonitor({ chatId: 'oc_a', prompt: 'p', alsoBotMention: 'yes' });

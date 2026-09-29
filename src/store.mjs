@@ -80,6 +80,15 @@ function normalizeMonitor(input, { existing } = {}) {
       if (keyword && !blockedKeywords.includes(keyword)) blockedKeywords.push(keyword);
     }
   }
+  // Keywords of which at least one must appear in a message's rendered text
+  // for it to be delivered. Trimmed, deduplicated; an empty list admits all.
+  const allowedKeywords = [];
+  if (Array.isArray(input.allowedKeywords)) {
+    for (const value of input.allowedKeywords) {
+      const keyword = nonEmptyString(value);
+      if (keyword && !allowedKeywords.includes(keyword)) allowedKeywords.push(keyword);
+    }
+  }
   const monitor = {
     monitorId: isValidMonitorId(input.monitorId) ? input.monitorId : newMonitorId(),
     name: nonEmptyString(input.name) ?? '',
@@ -115,6 +124,11 @@ function normalizeMonitor(input, { existing } = {}) {
      * suppress delivery); an empty list blocks nothing.
      */
     blockedKeywords,
+    /**
+     * Keywords of which one must appear in the rendered text for the
+     * message to be delivered; an empty list admits everything.
+     */
+    allowedKeywords,
     /**
      * `false` (default): the sender list alone decides. `true`: messages
      * that @-mention this app's own bot are also accepted, even from a
@@ -386,6 +400,7 @@ export function publicMonitor(monitor) {
     skipOwnMessages: monitor.skipOwnMessages === true,
     onlySenderIds: [...(monitor.onlySenderIds ?? [])],
     blockedKeywords: [...(monitor.blockedKeywords ?? [])],
+    allowedKeywords: [...(monitor.allowedKeywords ?? [])],
     alsoBotMention: monitor.alsoBotMention === true,
     enabled: monitor.enabled !== false,
   };

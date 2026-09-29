@@ -287,6 +287,7 @@ const EMPTY_DRAFT = Object.freeze({
   skipOwnMessages: false,
   onlySenderIds: [],
   blockedKeywords: [],
+  allowedKeywords: [],
   alsoBotMention: false,
   enabled: true,
 });
@@ -424,6 +425,17 @@ function MonitorEditor({ draft, setDraft, chats, targets, senders, onSave, onCan
         value: (draft.blockedKeywords ?? []).join('\n'),
         onChange: (e) => update({
           blockedKeywords: e.target.value.split('\n')
+            .map((line) => line.trim())
+            .filter((line, index, all) => line && all.indexOf(line) === index),
+        }),
+      })),
+    h('div', { className: 'lsm-field' },
+      h('span', { className: 'lsm-label' }, '关键词白名单（每行一个，命中任一才投递该消息；留空 = 不限制）'),
+      h('textarea', {
+        rows: 2,
+        value: (draft.allowedKeywords ?? []).join('\n'),
+        onChange: (e) => update({
+          allowedKeywords: e.target.value.split('\n')
             .map((line) => line.trim())
             .filter((line, index, all) => line && all.indexOf(line) === index),
         }),
@@ -773,6 +785,8 @@ export function LarkMonitorPage({ rpcCall }) {
             monitor.skipOwnMessages ? h('span', null, '过滤自己消息') : null,
             (monitor.blockedKeywords?.length ?? 0) > 0
               ? h('span', null, `屏蔽词×${monitor.blockedKeywords.length}`) : null,
+            (monitor.allowedKeywords?.length ?? 0) > 0
+              ? h('span', null, `白名单词×${monitor.allowedKeywords.length}`) : null,
             monitor.alsoBotMention || (monitor.onlySenderIds?.length ?? 0) > 0
               ? h('span', null, [
                   (monitor.onlySenderIds?.length ?? 0) > 0

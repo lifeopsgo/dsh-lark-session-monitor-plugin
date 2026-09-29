@@ -261,14 +261,18 @@ export class MonitorRuntime {
           || (wantMention && mentionsId(message, botOpenId)));
       }
 
-      // Keyword blacklist, checked on the rendered text: a card whose
-      // content mentions a blocked word is suppressed exactly like plain
-      // text would be. Blocked messages are consumed, not retried — the
-      // cursor advances past them with the rest of `fresh`.
+      // Keyword filters, both checked on the rendered text: a card whose
+      // content mentions a keyword is treated exactly like plain text. The
+      // allowlist admits (an empty list admits all); the blacklist then
+      // suppresses, so a message named by both is dropped. Filtered
+      // messages are consumed, not retried — the cursor advances past them
+      // with the rest of `fresh`.
+      const allowed = Array.isArray(latest.allowedKeywords) ? latest.allowedKeywords : [];
       const blocked = Array.isArray(latest.blockedKeywords) ? latest.blockedKeywords : [];
       const bodies = deliverable
         .map((message) => this.#format(latest, message))
         .filter((body) => typeof body === 'string' && body)
+        .filter((body) => (allowed.length === 0 || matchesBlockedKeywords(body, allowed)))
         .filter((body) => !matchesBlockedKeywords(body, blocked));
       if (bodies.length === 0) {
         // Nothing renderable, but the cursor must still move past them.
