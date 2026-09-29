@@ -16,6 +16,8 @@
  * @module dsh-lark-session-monitor-plugin
  */
 
+import Schema from '@deepseek-ai/schemastery';
+
 import { Authorizer } from './auth.mjs';
 import { fetchAppBotIdentity } from './bot-identity.mjs';
 import { SessionDeliverer, HarnessGateway } from './deliver.mjs';
@@ -39,31 +41,15 @@ export const name = 'dsh-lark-session-monitor-plugin';
  */
 export const inject = ['connection'];
 
-/**
- * Defaults for the configurable surface.
- *
- * Declared as plain values rather than a Schemastery schema on purpose: this
- * package is installed by path, and a schema import would make the plugin
- * depend on how the profile hoists `@deepseek-ai/schemastery`. The shipped IM
- * plugin takes the same route, and it keeps the package self-contained.
- * Everything here is still overridable from `cordis.patch.yml`.
- */
-const DEFAULT_CONFIG = Object.freeze({
-  rpcAuthority: 'trusted-host',
-  autoStart: true,
-  maxChats: 500,
+/** Host configuration validated by the Loader before the plugin activates. */
+export const Config = Schema.object({
+  rpcAuthority: Schema.union([
+    Schema.const('trusted-host'),
+    Schema.const('loopback'),
+  ]).default('trusted-host'),
+  autoStart: Schema.boolean().default(true),
+  maxChats: Schema.number().step(1).min(1).default(500),
 });
-
-function resolveConfig(input) {
-  const config = input && typeof input === 'object' ? input : {};
-  return {
-    rpcAuthority: config.rpcAuthority === 'loopback' ? 'loopback' : DEFAULT_CONFIG.rpcAuthority,
-    autoStart: config.autoStart === false ? false : DEFAULT_CONFIG.autoStart,
-    maxChats: Number.isFinite(config.maxChats) && config.maxChats > 0
-      ? Math.trunc(config.maxChats)
-      : DEFAULT_CONFIG.maxChats,
-  };
-}
 
 /**
  * Resolve an optional service.
@@ -88,7 +74,9 @@ function intervalReader(store) {
 }
 
 export function apply(ctx, config) {
-  const settings = resolveConfig(config);
+  // The Loader applies Config before activation. Calling it here as well keeps
+  // direct programmatic use and the smoke tests on the identical contract.
+  const settings = Config(config ?? {});
   const logger = typeof ctx.logger === 'function' ? ctx.logger(name) : console;
 
   const credentials = optional(ctx, 'credentials');

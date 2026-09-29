@@ -3,8 +3,8 @@
  *
  * This module exists because the Remote `workspace.follow` stream answered
  * empty on the live Host while the registry plainly held twenty workspaces.
- * The reads below mirror the real registry shape, which the live probe
- * confirmed: `{ id, record: { path, title, sessionIds } }`.
+ * The reader accepts both the legacy `{ id, record: { ... } }` projection and
+ * current DSH `Workspace` entries (`{ id, path, title, sessionIds }`).
  */
 
 import assert from 'node:assert/strict';
@@ -41,10 +41,19 @@ function entity(id, path, sessionIds = [], title = '') {
   return { id, record: { path, title, sessionIds } };
 }
 
-test('a registry entity projects to the Remote workspace shape', () => {
+test('a legacy registry entity projects to the Remote workspace shape', () => {
   const projected = workspaceFromEntity(entity('w1', '/a', ['s1'], 'Alpha'));
   assert.deepEqual(projected, {
     workspaceId: 'w1', path: '/a', title: 'Alpha', sessionIds: ['s1'],
+  });
+});
+
+test('a current Workspace registry entry projects to the Remote workspace shape', () => {
+  const projected = workspaceFromEntity({
+    id: 'w2', path: '/current', title: 'Current', sessionIds: ['s2', 's3'],
+  });
+  assert.deepEqual(projected, {
+    workspaceId: 'w2', path: '/current', title: 'Current', sessionIds: ['s2', 's3'],
   });
 });
 

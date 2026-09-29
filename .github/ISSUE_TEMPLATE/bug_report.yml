@@ -11,7 +11,7 @@ body:
     attributes:
       label: DSH version
       description: Output of `dsh --version`
-      placeholder: e.g. 0.1.5-rc.1
+      placeholder: e.g. 0.2.0-rc.1
     validations:
       required: true
   - type: input

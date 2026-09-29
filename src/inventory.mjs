@@ -23,23 +23,26 @@ function stringOr(value, fallback = '') {
 }
 
 /**
- * Project one registry entity the way `workspaceView` does.
+ * Project a workspace registry entry into the picker/delivery shape.
  *
- * The registry entity is `{ id, record: { path, title, sessionIds, ... } }`;
- * the Remote projection flattens that into `workspaceId`/`path`/`sessionIds`.
+ * Current DSH exposes `Workspace` instances directly (`{ id, path, title,
+ * sessionIds }`); earlier releases exposed `{ id, record: { ... } }`. Accept
+ * both shapes so the picker and delivery always use the registry's canonical
+ * session accounting during an upgrade.
  */
 export function workspaceFromEntity(entity) {
   if (!isRecord(entity)) return undefined;
-  const record = isRecord(entity.record) ? entity.record : {};
+  const legacyRecord = isRecord(entity.record) ? entity.record : undefined;
+  const source = legacyRecord ?? entity;
   const id = entity.id;
   if (typeof id !== 'string' || !id) return undefined;
-  const sessionIds = Array.isArray(record.sessionIds)
-    ? record.sessionIds.filter((value) => typeof value === 'string' && value)
+  const sessionIds = Array.isArray(source.sessionIds)
+    ? source.sessionIds.filter((value) => typeof value === 'string' && value)
     : [];
   return {
     workspaceId: id,
-    path: stringOr(record.path),
-    title: stringOr(record.title),
+    path: stringOr(source.path),
+    title: stringOr(source.title),
     sessionIds,
   };
 }

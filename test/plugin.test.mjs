@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { apply, name } from '../lib/index.js';
+import { apply, Config, name } from '../lib/index.js';
 
 /** A context double recording effects, listeners and registered routes. */
 function fakeContext(services = {}) {
@@ -50,6 +50,16 @@ const baseConfig = { rpcAuthority: 'trusted-host', autoStart: false, maxChats: 5
 test('the bundle exposes the plugin contract', () => {
   assert.equal(name, 'dsh-lark-session-monitor-plugin');
   assert.equal(typeof apply, 'function');
+});
+
+test('the bundle exposes a schema that resolves valid configuration defaults', () => {
+  assert.equal(typeof Config, 'function');
+  assert.deepEqual(Config({}), {
+    rpcAuthority: 'trusted-host',
+    autoStart: true,
+    maxChats: 500,
+  });
+  assert.throws(() => Config({ maxChats: 0 }), /maxChats/);
 });
 
 test('apply registers an effect and a settings route without touching the network', () => {
