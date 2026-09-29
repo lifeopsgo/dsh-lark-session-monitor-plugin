@@ -309,6 +309,20 @@ test('onlySenderIds keeps unique, non-empty ids and drops everything else', asyn
   assert.deepEqual(view.onlySenderIds, ['ou_1', 'ou_2']);
 });
 
+test('blockedKeywords keeps unique non-empty strings and drops everything else', async () => {
+  const { store } = await openStore();
+  const monitor = await store.upsertMonitor({
+    chatId: 'oc_a', prompt: 'p',
+    blockedKeywords: [' 周报 ', '', '周报', 42, null, ['会议纪要'], '报销'],
+  });
+  // The nested array is garbage and is dropped like the other non-strings.
+  assert.deepEqual(monitor.blockedKeywords, ['周报', '报销']);
+  // The public view carries it, or the editor cannot show the list.
+  const view = publicSettings(store.snapshot()).monitors
+    .find((m) => m.monitorId === monitor.monitorId);
+  assert.deepEqual(view.blockedKeywords, ['周报', '报销']);
+});
+
 test('alsoBotMention needs a literal true', async () => {
   const { store } = await openStore();
   const off = await store.upsertMonitor({ chatId: 'oc_a', prompt: 'p', alsoBotMention: 'yes' });

@@ -247,6 +247,34 @@ test('app senders are labelled as bots in the delivered text', async () => {
   assert.deepEqual(deliverer.batches[0].bodies, ['[智能纪要助手（机器人）] [om_1] 纪要链接']);
 });
 
+test('a message matching any blocked keyword is skipped, cursor still moves', async () => {
+  const deliverer = fakeDeliverer();
+  const messages = [
+    feishuMessage({ id: 'om_1', text: '周报链接', timeMs: 1_700_000_000_000 }),
+    feishuMessage({ id: 'om_2', text: '正常消息', timeMs: 1_700_000_001_000 }),
+  ];
+  const { runtime, store } = runtimeFor({
+    monitors: [monitor({ blockedKeywords: ['周报'] })], messages, deliverer,
+  });
+  await runtime.poll();
+  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_2] 正常消息']);
+  // The blocked message must not stall the cursor: it is consumed, not retried.
+  assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
+});
+
+test('blocked keywords match the rendered text of cards too', async () => {
+  const deliverer = fakeDeliverer();
+  const messages = [feishuMessage({
+    id: 'om_1', type: 'interactive', timeMs: 1_700_000_000_000,
+    content: { elements: [{ tag: 'div', text: { tag: 'plain_text', content: '会议纪要已生成' } }] },
+  })];
+  const { runtime } = runtimeFor({
+    monitors: [monitor({ blockedKeywords: ['纪要'] })], messages, deliverer,
+  });
+  await runtime.poll();
+  assert.equal(deliverer.batches.length, 0);
+});
+
 test('card messages are read with their original JSON and delivered as content', async () => {
   const deliverer = fakeDeliverer();
   const messages = [feishuMessage({

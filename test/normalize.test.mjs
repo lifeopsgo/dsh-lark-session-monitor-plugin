@@ -11,6 +11,7 @@ import test from 'node:test';
 import {
   applyAppBotName,
   composePrompt,
+  matchesBlockedKeywords,
   distinctSenders,
   isAppSender,
   isFromSenders,
@@ -228,6 +229,16 @@ test('mentionsId recognizes bot mentions in the mentions array and post at-nodes
   assert.equal(mentionsId(post, 'ou_other'), false);
 
   assert.equal(mentionsId(message('text', { text: 'hi' }), 'ou_bot'), false);
+});
+
+test('matchesBlockedKeywords hits any keyword, case-insensitively', () => {
+  const text = '会议纪要：Q3 Roadmap 讨论';
+  assert.equal(matchesBlockedKeywords(text, ['roadmap']), true);
+  assert.equal(matchesBlockedKeywords(text, ['周报', '纪要']), true);
+  assert.equal(matchesBlockedKeywords(text, ['周报', '报销']), false);
+  assert.equal(matchesBlockedKeywords(text, []), false, 'empty list means no restriction');
+  assert.equal(matchesBlockedKeywords(text, undefined), false);
+  assert.equal(matchesBlockedKeywords('', ['x']), false);
 });
 
 test('applyAppBotName fills the configured bot name into the picker list', () => {

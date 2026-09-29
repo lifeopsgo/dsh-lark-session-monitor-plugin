@@ -17,7 +17,7 @@
  * @module dsh-lark-session-monitor-plugin/runtime
  */
 
-import { isAppSender, isFromSenders, isOwnMessage, mentionsId, renderMessage, senderLabel } from './normalize.mjs';
+import { isAppSender, isFromSenders, isOwnMessage, matchesBlockedKeywords, mentionsId, renderMessage, senderLabel } from './normalize.mjs';
 import { MIN_POLL_INTERVAL_MS } from './store.mjs';
 
 /** Messages delivered in one prompt; the remainder waits for the next round. */
@@ -261,9 +261,15 @@ export class MonitorRuntime {
           || (wantMention && mentionsId(message, botOpenId)));
       }
 
+      // Keyword blacklist, checked on the rendered text: a card whose
+      // content mentions a blocked word is suppressed exactly like plain
+      // text would be. Blocked messages are consumed, not retried — the
+      // cursor advances past them with the rest of `fresh`.
+      const blocked = Array.isArray(latest.blockedKeywords) ? latest.blockedKeywords : [];
       const bodies = deliverable
         .map((message) => this.#format(latest, message))
-        .filter((body) => typeof body === 'string' && body);
+        .filter((body) => typeof body === 'string' && body)
+        .filter((body) => !matchesBlockedKeywords(body, blocked));
       if (bodies.length === 0) {
         // Nothing renderable, but the cursor must still move past them.
         await this.#advance(latest, fresh[fresh.length - 1]);

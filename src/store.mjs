@@ -71,6 +71,15 @@ function normalizeMonitor(input, { existing } = {}) {
       if (id && !onlySenderIds.includes(id)) onlySenderIds.push(id);
     }
   }
+  // Keywords whose mere appearance in a message's rendered text suppresses
+  // delivery. Trimmed, deduplicated; an empty list blocks nothing.
+  const blockedKeywords = [];
+  if (Array.isArray(input.blockedKeywords)) {
+    for (const value of input.blockedKeywords) {
+      const keyword = nonEmptyString(value);
+      if (keyword && !blockedKeywords.includes(keyword)) blockedKeywords.push(keyword);
+    }
+  }
   const monitor = {
     monitorId: isValidMonitorId(input.monitorId) ? input.monitorId : newMonitorId(),
     name: nonEmptyString(input.name) ?? '',
@@ -101,6 +110,11 @@ function normalizeMonitor(input, { existing } = {}) {
      * messages.
      */
     onlySenderIds,
+    /**
+     * Keywords (any of which, appearing in a message's rendered text,
+     * suppress delivery); an empty list blocks nothing.
+     */
+    blockedKeywords,
     /**
      * `false` (default): the sender list alone decides. `true`: messages
      * that @-mention this app's own bot are also accepted, even from a
@@ -371,6 +385,7 @@ export function publicMonitor(monitor) {
     autoCreateAndPin: monitor.autoCreateAndPin === true,
     skipOwnMessages: monitor.skipOwnMessages === true,
     onlySenderIds: [...(monitor.onlySenderIds ?? [])],
+    blockedKeywords: [...(monitor.blockedKeywords ?? [])],
     alsoBotMention: monitor.alsoBotMention === true,
     enabled: monitor.enabled !== false,
   };

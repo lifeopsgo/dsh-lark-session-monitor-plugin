@@ -286,6 +286,7 @@ const EMPTY_DRAFT = Object.freeze({
   autoCreateAndPin: false,
   skipOwnMessages: false,
   onlySenderIds: [],
+  blockedKeywords: [],
   alsoBotMention: false,
   enabled: true,
 });
@@ -414,6 +415,19 @@ function MonitorEditor({ draft, setDraft, chats, targets, senders, onSave, onCan
       }),
       h('span', { className: 'lsm-hint' },
         '也接收 @机器人 的消息（@本应用机器人的消息不受发送者名单限制；名单留空时即只收 @机器人 的消息）')),
+    // Keyword blacklist: one keyword per line — a line may contain commas,
+    // so the textarea, not a comma-split input, is the lossless encoding.
+    h('div', { className: 'lsm-field' },
+      h('span', { className: 'lsm-label' }, '关键词黑名单（每行一个，命中任一即不投递该消息；留空 = 不屏蔽）'),
+      h('textarea', {
+        rows: 2,
+        value: (draft.blockedKeywords ?? []).join('\n'),
+        onChange: (e) => update({
+          blockedKeywords: e.target.value.split('\n')
+            .map((line) => line.trim())
+            .filter((line, index, all) => line && all.indexOf(line) === index),
+        }),
+      })),
     // Only meaningful while no session is chosen: it decides whether the
     // auto-created session is reused or a fresh one is made per message.
     draft.sessionId
@@ -757,6 +771,8 @@ export function LarkMonitorPage({ rpcCall }) {
                     `目标：${monitor.sessionTitle || sessionTitles.get(monitor.sessionId) || monitor.sessionId}`)
                 : (monitor.autoCreateAndPin ? '目标：自动创建并固定绑定（尚未创建）' : '目标：每条消息新建')),
             monitor.skipOwnMessages ? h('span', null, '过滤自己消息') : null,
+            (monitor.blockedKeywords?.length ?? 0) > 0
+              ? h('span', null, `屏蔽词×${monitor.blockedKeywords.length}`) : null,
             monitor.alsoBotMention || (monitor.onlySenderIds?.length ?? 0) > 0
               ? h('span', null, [
                   (monitor.onlySenderIds?.length ?? 0) > 0

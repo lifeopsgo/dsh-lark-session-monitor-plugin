@@ -313,6 +313,23 @@ export function mentionsId(message, id) {
  * so picking a sender produces exactly the id the runtime filter matches on.
  * Names are best effort: chat reads do not always carry them.
  */
+/**
+ * True when the rendered text contains any blocked keyword.
+ *
+ * Matching is case-insensitive (Chinese keywords are unaffected) and runs
+ * against the rendered delivery text, so card content is filtered on what
+ * the session would actually read. An empty list is "nothing blocked".
+ */
+export function matchesBlockedKeywords(text, keywords) {
+  const haystack = typeof text === 'string' ? text.toLowerCase() : '';
+  if (!haystack) return false;
+  return (Array.isArray(keywords) ? keywords : []).some((keyword) => {
+    if (typeof keyword !== 'string') return false;
+    const needle = keyword.trim().toLowerCase();
+    return needle ? haystack.includes(needle) : false;
+  });
+}
+
 export function distinctSenders(messages) {
   const byId = new Map();
   for (const message of Array.isArray(messages) ? messages : []) {
