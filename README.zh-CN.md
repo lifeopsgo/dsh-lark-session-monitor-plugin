@@ -19,7 +19,7 @@
 
 | DSH 版本 | 状态 |
 | --- | --- |
-| 0.2.0-rc.1 | **已验证** — 已针对当前 DSH Web 运行时核验包表面与插件契约，并通过自动构建和回归测试 |
+| 0.2.0-rc.1 及以上 | **已验证** — 已针对当前 DSH Web 运行时核验包表面与插件契约，并通过自动构建和回归测试 |
 | 更早的 0.1.x 版本 | 此发布线不支持 |
 
 ## 快速开始
@@ -27,7 +27,7 @@
 需要 **Node.js ≥ 22.6**。
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.0.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.1.0
 ```
 
 重启 DSH，然后刷新页面。打开 **设置 → 插件 → 飞书会话监听**。
@@ -36,7 +36,7 @@ dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2
 <summary>升级或卸载</summary>
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.0.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.1.0
 dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 ```
 

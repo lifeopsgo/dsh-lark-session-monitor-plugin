@@ -26,9 +26,8 @@ export const MAX_BATCH_SIZE = 10;
 /** How far back the very first poll of a monitor looks. */
 const INITIAL_LOOKBACK_MS = 10 * 60_000;
 
-function isRecord(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
+/** Separator between digest entries within one delivery. */
+export const DIGEST_SEPARATOR = '\n\n---\n\n';
 
 /** Feishu timestamps are epoch milliseconds in a string. */
 function messageTimeMs(message) {
@@ -39,6 +38,15 @@ function messageTimeMs(message) {
   }
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
   return null;
+}
+
+/** Format an epoch-ms timestamp as a local `YYYY-MM-DD HH:mm:ss` string. */
+function formatTimestamp(timeMs) {
+  const date = new Date(timeMs);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+    + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 /**
@@ -269,17 +277,17 @@ export class MonitorRuntime {
       // with the rest of `fresh`.
       const allowed = Array.isArray(latest.allowedKeywords) ? latest.allowedKeywords : [];
       const blocked = Array.isArray(latest.blockedKeywords) ? latest.blockedKeywords : [];
-      const bodies = deliverable
+      const text = deliverable
         .map((message) => this.#format(latest, message))
         .filter((body) => typeof body === 'string' && body)
         .filter((body) => (allowed.length === 0 || matchesBlockedKeywords(body, allowed)))
         .filter((body) => !matchesBlockedKeywords(body, blocked));
-      if (bodies.length === 0) {
+      if (text.length === 0) {
         // Nothing renderable, but the cursor must still move past them.
         await this.#advance(latest, fresh[fresh.length - 1]);
         return;
       }
-      await this.#enqueue(latest, bodies, fresh);
+      await this.#enqueue(latest, text, fresh);
     } catch (error) {
       if (this.#closed) return;
       const message = error instanceof Error ? error.message : String(error);
@@ -319,42 +327,73 @@ export class MonitorRuntime {
   }
 
   /**
-   * Render one message, prefixing sender and Feishu message id so the
-   * prompt carries provenance — the id is what makes a message referenceable
-   * (replying, quoting, marking done) from the session side.
+   * Render one message as a digest entry: `time [sender] [id] content`.
+   *
+   * The time is what makes a merged batch auditable — a reader of the session
+   * can tell which conversation moments the batch spans, and the session
+   * side can reason about ordering.
    */
   #format(monitor, message) {
     const rendered = renderMessage(message);
     if (!rendered) return undefined;
     const who = isAppSender(message) ? `${senderLabel(message)}（机器人）` : senderLabel(message);
     const id = typeof message?.message_id === 'string' && message.message_id ? message.message_id : '';
-    return id ? `[${who}] [${id}] ${rendered.text}` : `[${who}] ${rendered.text}`;
+    const time = messageTimeMs(message);
+    const stamp = time === null ? '' : formatTimestamp(time);
+    const senderPart = `[${who}]`;
+    const idPart = id ? ` [${id}]` : '';
+    const timePart = stamp ? `${stamp} ` : '';
+    return `${timePart}${senderPart}${idPart} ${rendered.text}`;
   }
 
   /**
-   * Queue bodies and deliver them in batches of {@link MAX_BATCH_SIZE}.
+   * Queue digest entries and deliver them in merged prompts.
    *
-   * The whole page is delivered before the cursor moves. Delivering only the
-   * first batch and advancing anyway would drop the remainder permanently,
-   * because the next poll starts after the cursor.
+   * The whole page is merged into as few prompts as the batch cap allows,
+   * joined by the digest separator. Delivering only the first prompt and
+   * advancing anyway would drop the remainder permanently, because the next
+   * poll starts after the cursor.
    *
-   * Each batch re-reads the monitor: an auto-created session is written back
+   * Each prompt re-reads the monitor: an auto-created session is written back
    * during the first delivery, and reusing the caller's snapshot would make
-   * the next batch create a second session — silently defeating the "pin the
+   * the next prompt create a second session — silently defeating the "pin the
    * auto-created session" choice.
+   *
+   * A failed prompt keeps its batch queued and rethrows, so the cursor does
+   * not move and the next poll retries the same entries — a busy session is
+   * a delay, never a loss. Because a held cursor makes the next poll re-read
+   * the same messages, entries are deduplicated by Feishu message id before
+   * joining the queue: a retry re-delivers the failed batch exactly once.
    */
-  async #enqueue(monitor, bodies, fresh) {
+  async #enqueue(monitor, entries, fresh) {
     const queue = this.#pending.get(monitor.monitorId) ?? [];
-    queue.push(...bodies);
+    // Entries arrive as `[time [sender] [id] content]` strings; the message id
+    // inside brackets is the dedup key a retry arrives with (a held cursor
+    // makes the next poll re-read the same messages).
+    const queued = new Set(queue.map((body) => body.match(/\[((?:om_|om)[^\]]+)\]/)?.[1]).filter(Boolean));
+    queue.push(...entries.filter((body) => {
+      const id = body.match(/\[((?:om_|om)[^\]]+)\]/)?.[1];
+      if (!id) return true;
+      if (queued.has(id)) return false;
+      queued.add(id);
+      return true;
+    }));
     this.#pending.set(monitor.monitorId, queue);
 
     let delivered = 0;
-    while (queue.length > 0) {
-      const batch = queue.slice(0, MAX_BATCH_SIZE);
-      const latest = this.#store.monitor(monitor.monitorId) ?? monitor;
-      await this.#deliverer.deliver(latest, batch, this.#controller.signal);
-      queue.splice(0, batch.length);
-      delivered += batch.length;
+    try {
+      while (queue.length > 0) {
+        const batch = queue.slice(0, MAX_BATCH_SIZE);
+        const latest = this.#store.monitor(monitor.monitorId) ?? monitor;
+        await this.#deliverer.deliver(latest, batch, this.#controller.signal);
+        queue.splice(0, batch.length);
+        delivered += batch.length;
+      }
+    } catch (error) {
+      // The failed batch stays at the head of the queue and the cursor stays
+      // put: nothing is dropped, the next poll retries.
+      this.#setState(monitor.monitorId, { lastError: error instanceof Error ? error.message : String(error) });
+      throw error;
     }
 
     await this.#advance(monitor, fresh[fresh.length - 1]);

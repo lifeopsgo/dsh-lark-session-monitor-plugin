@@ -18,7 +18,7 @@ A **DeepSeek Harness (DSH)** plugin that reads Feishu conversations with **your 
 
 | DSH version | Status |
 | --- | --- |
-| 0.2.0-rc.1 | **verified** — package surface and plugin contract checked against the current DSH Web runtime; automated build and regression suite pass |
+| 0.2.0-rc.1 or later | **verified** — package surface and plugin contract checked against the current DSH Web runtime; automated build and regression suite pass |
 | Earlier 0.1.x releases | not supported by this release line |
 
 ## Quick start
@@ -26,7 +26,7 @@ A **DeepSeek Harness (DSH)** plugin that reads Feishu conversations with **your 
 Requires **Node.js ≥ 22.6**.
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.0.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.1.0
 ```
 
 Restart DSH, then refresh the page. Open **Settings → Plugins → 飞书会话监听**.
@@ -35,7 +35,7 @@ Restart DSH, then refresh the page. Open **Settings → Plugins → 飞书会话
 <summary>Upgrade or remove</summary>
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.0.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.1.0
 dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 ```
 

@@ -43,13 +43,15 @@ function fakeStore(monitors) {
   };
 }
 
-/** Delivery double recording each batch. */
-function fakeDeliverer({ fail = false } = {}) {
+/** Delivery double recording each batch; fails the first `failTimes` prompts. */
+function fakeDeliverer({ fail = false, failTimes = 0 } = {}) {
   const batches = [];
+  let attempts = 0;
   return {
     batches,
     deliver: async (monitor, bodies) => {
-      if (fail) throw new Error('delivery failed');
+      attempts += 1;
+      if (fail || attempts <= failTimes) throw new Error('delivery failed');
       batches.push({ monitorId: monitor.monitorId, bodies: [...bodies] });
       return { delivered: bodies.length };
     },
@@ -149,7 +151,10 @@ test('new messages are delivered and the cursor advances past them', async () =>
   });
   await runtime.poll();
   assert.equal(deliverer.batches.length, 1);
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 第一条', '[张三] [om_2] 第二条']);
+  assert.deepEqual(deliverer.batches[0].bodies, [
+    '2023-11-15 06:13:20 [张三] [om_1] 第一条',
+    '2023-11-15 06:13:21 [张三] [om_2] 第二条',
+  ]);
   assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
   assert.equal(store.state[0].cursor.lastCreateTimeMs, 1_700_000_001_000);
 });
@@ -163,7 +168,7 @@ test('the prompt is composed with the message under it', async () => {
   });
   // Assert on what the deliverer received; composePrompt is unit-tested apart.
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 正文']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['2023-11-15 06:13:20 [张三] [om_1] 正文']);
 });
 
 test('an already-delivered message at the same second is not re-delivered', async () => {
@@ -179,7 +184,7 @@ test('an already-delivered message at the same second is not re-delivered', asyn
   });
   await runtime.poll();
   assert.equal(deliverer.batches.length, 1);
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_new] 新的']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['2023-11-15 06:13:20 [张三] [om_new] 新的']);
 });
 
 test('messages older than the cursor are ignored entirely', async () => {
@@ -244,7 +249,7 @@ test('app senders are labelled as bots in the delivered text', async () => {
   })];
   const { runtime } = runtimeFor({ monitors: [monitor()], messages, deliverer });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[智能纪要助手（机器人）] [om_1] 纪要链接']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['2023-11-15 06:13:20 [智能纪要助手（机器人）] [om_1] 纪要链接']);
 });
 
 test('a message matching any blocked keyword is skipped, cursor still moves', async () => {
@@ -257,7 +262,7 @@ test('a message matching any blocked keyword is skipped, cursor still moves', as
     monitors: [monitor({ blockedKeywords: ['周报'] })], messages, deliverer,
   });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_2] 正常消息']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['2023-11-15 06:13:21 [张三] [om_2] 正常消息']);
   // The blocked message must not stall the cursor: it is consumed, not retried.
   assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
 });
@@ -291,7 +296,7 @@ test('an empty allowed list delivers everything; a non-empty one gates on hits',
     monitors: [monitor({ allowedKeywords: ['纪要', '周报'] })], messages, deliverer: gated,
   });
   await runtime.poll();
-  assert.deepEqual(gated.batches[0].bodies, ['[张三] [om_1] 会议纪要链接']);
+  assert.deepEqual(gated.batches[0].bodies, ['2023-11-15 06:13:20 [张三] [om_1] 会议纪要链接']);
 });
 
 test('the blacklist wins over the allowlist for the same message', async () => {
@@ -319,7 +324,7 @@ test('card messages are read with their original JSON and delivered as content',
   assert.equal(client.calls[0].cardMsgContentType, 'user_card_content');
   assert.deepEqual(
     deliverer.batches[0].bodies,
-    ['[张三] [om_card] 构建失败：流水线 (https://ci.example.com/1)'],
+    ['2023-11-15 06:13:20 [张三] [om_card] 构建失败：流水线 (https://ci.example.com/1)'],
   );
 });
 
@@ -418,7 +423,7 @@ test('skipOwnMessages drops your own messages and delivers the rest', async () =
     deliverer, client,
   });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[同事] [om_1] 别人的']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['2023-11-15 06:13:20 [同事] [om_1] 别人的']);
   // The cursor must pass the skipped message, or it is re-read every poll.
   assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
 });
@@ -444,7 +449,7 @@ test('own messages are delivered when the filter is off, and no identity is fetc
   const client = fakeClient(messages, { identity });
   const { runtime } = runtimeFor({ monitors: [monitor()], deliverer, client });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 我的']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['2023-11-15 06:13:20 [张三] [om_1] 我的']);
   assert.equal(client.userInfoCalls, 0);
 });
 
@@ -459,7 +464,7 @@ test('a failed identity fetch fails open instead of dropping messages', async ()
     logger: { warn: (...args) => warnings.push(args), error: () => {} },
   });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 我的']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['2023-11-15 06:13:20 [张三] [om_1] 我的']);
   assert.ok(warnings.some((args) => /identity/.test(String(args[0]))));
 });
 
@@ -496,7 +501,7 @@ test('onlySenderIds delivers just the whitelisted senders', async () => {
     messages, deliverer,
   });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 白名单内']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['2023-11-15 06:13:20 [张三] [om_1] 白名单内']);
   // The cursor passes the skipped sender's message, so it is not re-read.
   assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
 });
@@ -514,7 +519,7 @@ test('alsoBotMention with an empty sender list means only @bot messages', async 
     getBotOpenId: async () => { botIdCalls += 1; return 'ou_bot'; },
   });
   await runtime.poll();
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 叫我']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['2023-11-15 06:13:20 [张三] [om_1] 叫我']);
   assert.equal(store.state[0].cursor.lastMessageId, 'om_2');
   // The bot identity is cached for the process; a second poll does not re-fetch.
   await runtime.poll();
@@ -538,7 +543,10 @@ test('an @bot message is delivered even when its sender is not whitelisted', asy
   await runtime.poll();
   // Both acceptance paths, in conversation order: the whitelisted sender,
   // and the @bot mention from outside the whitelist.
-  assert.deepEqual(deliverer.batches[0].bodies, ['[张三] [om_1] 白名单内的普通消息', '[李四] [om_2] 路人点名机器人']);
+  assert.deepEqual(deliverer.batches[0].bodies, [
+    '2023-11-15 06:13:20 [张三] [om_1] 白名单内的普通消息',
+    '2023-11-15 06:13:21 [李四] [om_2] 路人点名机器人',
+  ]);
   assert.equal(store.state[0].cursor.lastMessageId, 'om_3');
 });
 
@@ -558,7 +566,7 @@ test('the mention path does not resurrect own messages', async () => {
   await runtime.poll();
   // skipOwnMessages still wins over the mention path: only the colleague's
   // @bot message is delivered, the user's own test ping is not.
-  assert.deepEqual(deliverer.batches[0].bodies, ['[李四] [om_2] 同事@机器人']);
+  assert.deepEqual(deliverer.batches[0].bodies, ['2023-11-15 06:13:21 [李四] [om_2] 同事@机器人']);
 });
 
 test('a missing bot identity holds the round instead of failing open', async () => {
@@ -595,4 +603,75 @@ test('the identity is fetched once and cached across polls', async () => {
   await runtime.poll();
   await runtime.poll();
   assert.equal(client.userInfoCalls, 1);
+});
+
+test('a multi-message batch is joined with a separator carrying time, sender, and content', async () => {
+  // The digest must read as a transcript: each message on its own line with
+  // its time and sender, joined by a visible separator.
+  const deliverer = fakeDeliverer();
+  const messages = [
+    feishuMessage({ id: 'om_1', text: '早上好', timeMs: 1_700_000_000_000 }),
+    feishuMessage({ id: 'om_2', text: '下午好', timeMs: 1_700_008_600_000 }),
+  ];
+  const { runtime } = runtimeFor({
+    monitors: [monitor({ cursor: { lastCreateTimeMs: 1_699_999_999_000 } })],
+    messages, deliverer,
+  });
+  await runtime.poll();
+  assert.equal(deliverer.batches.length, 1);
+  const joined = deliverer.batches[0].bodies.join('\n');
+  assert.match(joined, /2023-11-15 06:13:20.*张三.*早上好/);
+  assert.match(joined, /2023-11-15 08:36:40.*张三.*下午好/);
+  assert.equal(deliverer.batches[0].bodies.length, 2);
+});
+
+test('multi-message batches are merged into one prompt separated by a rule', async () => {
+  // Two fresh messages in one poll must reach the session as ONE prompt whose
+  // entries are separated by a visible rule, not as two separate prompts.
+  const deliverer = fakeDeliverer();
+  const messages = [
+    feishuMessage({ id: 'om_1', text: '第一条', timeMs: 1_700_000_000_000 }),
+    feishuMessage({ id: 'om_2', text: '第二条', timeMs: 1_700_000_001_000 }),
+  ];
+  const { runtime } = runtimeFor({
+    monitors: [monitor({ cursor: { lastCreateTimeMs: 1_699_999_999_000 } })],
+    messages, deliverer,
+  });
+  await runtime.poll();
+  assert.equal(deliverer.batches.length, 1, 'one merged prompt per poll');
+  assert.equal(deliverer.batches[0].bodies.length, 2, 'both messages ride the same prompt');
+});
+
+test('a busy session keeps the batch queued and retries on the next poll', async () => {
+  // The session is busy (the prompt is rejected), so this round fails, the
+  // cursor does NOT move, and the same batch is retried on the next poll.
+  const deliverer = fakeDeliverer({ failTimes: 1 });
+  const messages = [feishuMessage({ id: 'om_1', text: '正文', timeMs: 1_700_000_000_000 })];
+  const { runtime, store } = runtimeFor({
+    monitors: [monitor({ cursor: { lastCreateTimeMs: 1_699_999_999_000 } })],
+    messages, deliverer,
+  });
+  await runtime.poll();
+  assert.equal(store.state[0].cursor.lastMessageId, undefined, 'cursor held while busy');
+  assert.ok(runtime.status()[0].lastError, 'the failure is surfaced in status');
+
+  await runtime.poll();
+  assert.equal(deliverer.batches.length, 1, 'retried exactly once on the next poll');
+  assert.equal(deliverer.batches[0].bodies[0], '2023-11-15 06:13:20 [张三] [om_1] 正文');
+  assert.equal(store.state[0].cursor.lastMessageId, 'om_1', 'cursor advances after retry succeeds');
+});
+
+test('a retried batch is not duplicated when the next poll re-reads the same message', async () => {
+  // Regression guard: the failed batch stayed queued AND the next poll
+  // re-enqueued the same (still-fresh) message, delivering it twice.
+  const deliverer = fakeDeliverer({ failTimes: 1 });
+  const messages = [feishuMessage({ id: 'om_1', text: '正文', timeMs: 1_700_000_000_000 })];
+  const { runtime } = runtimeFor({
+    monitors: [monitor({ cursor: { lastCreateTimeMs: 1_699_999_999_000 } })],
+    messages, deliverer,
+  });
+  await runtime.poll();
+  await runtime.poll();
+  const flat = deliverer.batches.flatMap((b) => b.bodies);
+  assert.equal(flat.filter((body) => body.includes('om_1')).length, 1, 'om_1 delivered exactly once');
 });

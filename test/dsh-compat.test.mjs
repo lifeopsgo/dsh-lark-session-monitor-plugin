@@ -17,9 +17,9 @@ async function manifest() {
   return JSON.parse(await readFile(packageUrl, 'utf8'));
 }
 
-test('the 2.0.0 release manifest matches the verified 0.2 runtime package surface', async () => {
+test('the 2.1.0 release manifest matches the verified 0.2 runtime package surface', async () => {
   const pkg = await manifest();
-  assert.equal(pkg.version, '2.0.0', 'release version must be 2.0.0');
+  assert.equal(pkg.version, '2.1.0', 'release version must be 2.1.0');
   const dshPeers = Object.entries(pkg.peerDependencies)
     .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'));
 
@@ -27,8 +27,8 @@ test('the 2.0.0 release manifest matches the verified 0.2 runtime package surfac
   for (const [name, range] of dshPeers) {
     assert.match(
       range,
-      /0\.2\.0-rc\.1/,
-      `${name} must accept DSH 0.2.0-rc.1`,
+      /^>=0\.2\.0-rc\.1$/,
+      `${name} must require DSH >=0.2.0-rc.1`,
     );
   }
   assert.ok(
