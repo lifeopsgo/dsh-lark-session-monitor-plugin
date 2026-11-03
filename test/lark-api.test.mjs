@@ -33,6 +33,53 @@ function page(items, extra = {}) {
   return { code: 0, data: { items, has_more: false, page_token: '', ...extra } };
 }
 
+test('chatMemberNames pages through a conversation and maps ids to names', async () => {
+  // Message reads never carry a sender name, so the source picker resolves
+  // names from the member list under the same open ids.
+  const pages = [
+    {
+      code: 0,
+      data: {
+        items: [
+          { member_id: 'ou_a', name: '陆宝勤' },
+          { member_id: 'ou_b', name: ' 康冲 ' },
+          { member_id: 'ou_c', name: '' },
+        ],
+        has_more: true,
+        page_token: 'next',
+      },
+    },
+    {
+      code: 0,
+      data: { items: [{ member_id: 'ou_d', name: '黄天沛' }], has_more: false, page_token: '' },
+    },
+  ];
+  const calls = [];
+  const client = new LarkUserClient({
+    domain: 'feishu',
+    getToken: async () => 'token',
+    fetchImpl: async (url) => {
+      calls.push(String(url));
+      return new Response(JSON.stringify(pages[calls.length - 1]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  const names = await client.chatMemberNames('oc_chat');
+  assert.deepEqual([...names], [['ou_a', '陆宝勤'], ['ou_b', '康冲'], ['ou_d', '黄天沛']]);
+  const first = new URL(calls[0]);
+  assert.equal(first.pathname, '/open-apis/im/v1/chats/oc_chat/members');
+  assert.equal(first.searchParams.get('member_id_type'), 'open_id');
+  assert.equal(new URL(calls[1]).searchParams.get('page_token'), 'next');
+});
+
+test('chatMemberNames encodes a chat id rather than pasting it into the path', async () => {
+  const { client, calls } = clientFor(() => page([]));
+  await client.chatMemberNames('oc_weird/../id');
+  assert.ok(calls[0].includes('/chats/oc_weird%2F..%2Fid/members'), calls[0]);
+});
+
 test('listChats asks for p2p and group conversations explicitly', async () => {
   const { client, calls } = clientFor(() => page([]));
   await client.listChats();
@@ -71,6 +118,40 @@ test('listChats keeps paging until has_more is false', async () => {
   assert.equal(chats.length, 2);
   assert.equal(calls.length, 2);
   assert.equal(new URL(calls[1]).searchParams.get('page_token'), 't1');
+});
+
+test('listChats sorts by activity so the cap drops inactive chats first', async () => {
+  const { client, calls } = clientFor(() => page([]));
+  await client.listChats();
+  // ByCreateTimeAsc hides the newest chats behind the maxChats cap;
+  // ByActiveTimeDesc is the documented companion value this endpoint accepts
+  // (the API rejects ByCreateTimeDesc with 99992402).
+  assert.equal(new URL(calls[0]).searchParams.get('sort_type'), 'ByActiveTimeDesc');
+});
+
+test('listChats drops a chat that activity re-sorting repeats across pages', async () => {
+  // Feishu's docs warn ByActiveTimeDesc can move a chat between pages
+  // mid-pagination; the boundary case is the same chat on two pages.
+  let call = 0;
+  const { client } = clientFor(() => {
+    call += 1;
+    if (call === 1) {
+      return {
+        code: 0,
+        data: {
+          items: [{ chat_id: 'oc_1', name: '活跃群', chat_mode: 'group' }],
+          has_more: true,
+          page_token: 't1',
+        },
+      };
+    }
+    return page([
+      { chat_id: 'oc_1', name: '活跃群', chat_mode: 'group' },
+      { chat_id: 'oc_2', name: '另一群', chat_mode: 'group' },
+    ]);
+  });
+  const chats = await client.listChats();
+  assert.deepEqual(chats.map((chat) => chat.chatId), ['oc_1', 'oc_2']);
 });
 
 test('listMessages passes the card content format through, and omits it by default', async () => {

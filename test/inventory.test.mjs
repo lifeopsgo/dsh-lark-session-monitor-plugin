@@ -15,6 +15,7 @@ import {
   isArchivedSession,
   isKnownSession,
   listInventory,
+  listWorkspaceSessions,
   listWorkspaceTargets,
   listWorkspaces,
   sessionTitleFor,
@@ -141,24 +142,24 @@ test('a throwing title service does not break the inventory', () => {
   assert.equal(sessionTitleFor(ctx, { id: 's1' }), '');
 });
 
-test('targets pair each workspace with its own declared sessions', async () => {
+test('targets pair each workspace with its own declared sessions, registry-only', () => {
   const ctx = contextWith({
     entities: [entity('w1', '/a', ['s1', 's2']), entity('w2', '/b', ['s3'])],
     live: [{ id: 's1' }],
     title: (s) => (s?.id === 's1' ? { title: 'T1' } : undefined),
   });
-  const targets = await listWorkspaceTargets(ctx);
+  const targets = listWorkspaceTargets(ctx);
   assert.equal(targets.length, 2);
+  // Titles fold per picked workspace through listWorkspaceSessions, so the
+  // list answers with ids in milliseconds no matter how many logs exist.
   assert.deepEqual(targets[0].sessions, [
-    { sessionId: 's1', title: 'T1' },
-    // A session the workspace lists but that is not live still appears: it is
-    // a valid delivery target, just without a resolved title here.
+    { sessionId: 's1', title: '' },
     { sessionId: 's2', title: '' },
   ]);
   assert.deepEqual(targets[1].sessions, [{ sessionId: 's3', title: '' }]);
 });
 
-test('a live-store fault does not hide the workspace list', async () => {
+test('a live-store fault does not hide the workspace list', () => {
   const ctx = {
     get: (key) => {
       if (key === 'workspaceRegistry') return { list: () => [entity('w1', '/a', ['s1'])] };
@@ -166,7 +167,7 @@ test('a live-store fault does not hide the workspace list', async () => {
       return undefined;
     },
   };
-  const targets = await listWorkspaceTargets(ctx);
+  const targets = listWorkspaceTargets(ctx);
   assert.equal(targets.length, 1, 'workspaces must survive a session-store fault');
   assert.equal(targets[0].sessions[0].sessionId, 's1');
 });
@@ -196,9 +197,9 @@ test('cold sessions are titled from the session-query corpus', async () => {
       return undefined;
     },
   };
-  const targets = await listWorkspaceTargets(ctx);
+  const sessions = await listWorkspaceSessions(ctx, '/a');
   assert.deepEqual(requested, ['s_cold', 's_gone'], 'ids are looked up in one batch');
-  assert.deepEqual(targets[0].sessions, [
+  assert.deepEqual(sessions, [
     { sessionId: 's_cold', title: '历史会话标题' },
     // A session with no title event still appears, just unnamed.
     { sessionId: 's_gone', title: '' },
@@ -220,8 +221,8 @@ test('a per-session title failure does not blank the other sessions', async () =
       return undefined;
     },
   };
-  const targets = await listWorkspaceTargets(ctx);
-  assert.deepEqual(targets[0].sessions, [
+  const sessions = await listWorkspaceSessions(ctx, '/a');
+  assert.deepEqual(sessions, [
     { sessionId: 's1', title: '' },
     { sessionId: 's2', title: '可读的标题' },
   ]);
@@ -241,8 +242,8 @@ test('a title snapshot in object form is unwrapped', async () => {
       return undefined;
     },
   };
-  const targets = await listWorkspaceTargets(ctx);
-  assert.equal(targets[0].sessions[0].title, '嵌套标题');
+  const sessions = await listWorkspaceSessions(ctx, '/a');
+  assert.equal(sessions[0].title, '嵌套标题');
 });
 
 test('a throwing corpus degrades to untitled sessions rather than failing', async () => {
@@ -255,31 +256,105 @@ test('a throwing corpus degrades to untitled sessions rather than failing', asyn
       return undefined;
     },
   };
-  const targets = await listWorkspaceTargets(ctx);
-  assert.equal(targets.length, 1, 'the picker must still list workspaces');
-  assert.equal(targets[0].sessions[0].title, '');
+  const sessions = await listWorkspaceSessions(ctx, '/a');
+  assert.deepEqual(sessions, [{ sessionId: 's1', title: '' }],
+    'the picker must still show the registry id when titles are unavailable');
 });
 
-test('a Host with no session query still lists workspaces', async () => {
+test('a Host with no session query still lists workspaces and folds ids', async () => {
   const ctx = contextWith({ entities: [entity('w1', '/a', ['s1'])] });
-  const targets = await listWorkspaceTargets(ctx);
+  const targets = listWorkspaceTargets(ctx);
   assert.equal(targets[0].sessions[0].sessionId, 's1');
+  const sessions = await listWorkspaceSessions(ctx, '/a');
+  assert.deepEqual(sessions, [{ sessionId: 's1', title: '' }]);
 });
 
-test('an empty inventory makes no title lookup at all', async () => {
+test('the workspace list makes no title lookup at all', () => {
   let called = false;
   const ctx = {
     get: (key) => {
-      if (key === 'workspaceRegistry') return { list: () => [] };
+      if (key === 'workspaceRegistry') {
+        return { list: () => [entity('w1', '/a', ['s1'])] };
+      }
       if (key === 'sessionQuery') {
         return { readTitleSnapshots: async () => { called = true; return []; } };
       }
       return undefined;
     },
   };
-  const targets = await listWorkspaceTargets(ctx);
-  assert.deepEqual(targets, []);
+  const targets = listWorkspaceTargets(ctx);
+  assert.equal(targets.length, 1);
+  assert.equal(called, false, 'the picker must list workspaces before any log is read');
+});
+
+test('an unknown workspace resolves to an empty session list without a lookup', async () => {
+  let called = false;
+  const ctx = {
+    get: (key) => {
+      if (key === 'workspaceRegistry') {
+        return { list: () => [entity('w1', '/a', ['s1'])] };
+      }
+      if (key === 'sessionQuery') {
+        return { readTitleSnapshots: async () => { called = true; return []; } };
+      }
+      return undefined;
+    },
+  };
+  assert.deepEqual(await listWorkspaceSessions(ctx, '/missing'), []);
   assert.equal(called, false);
+});
+
+test('a live session still gains its title when the corpus cannot name it', async () => {
+  const ctx = {
+    get: (key) => {
+      if (key === 'workspaceRegistry') {
+        return { list: () => [entity('w1', '/a', ['s_persisted', 's_open'])] };
+      }
+      if (key === 'sessionQuery') {
+        return {
+          readTitleSnapshots: async () => [
+            { status: 'fulfilled', value: { title: '日志标题' } },
+            { status: 'rejected', reason: new Error('log unreadable') },
+          ],
+        };
+      }
+      if (key === 'sessions') return { list: () => [{ id: 's_open' }] };
+      if (key === 'sessionTitle') {
+        return { get: (session) => (session?.id === 's_open' ? { title: '在线标题' } : undefined) };
+      }
+      return undefined;
+    },
+  };
+  const sessions = await listWorkspaceSessions(ctx, '/a');
+  assert.deepEqual(sessions, [
+    { sessionId: 's_persisted', title: '日志标题' },
+    { sessionId: 's_open', title: '在线标题' },
+  ]);
+});
+
+test('an aborted title fold propagates the cancellation', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let sawSignal = false;
+  const ctx = {
+    get: (key) => {
+      if (key === 'workspaceRegistry') {
+        return { list: () => [entity('w1', '/a', ['s1'])] };
+      }
+      if (key === 'sessionQuery') {
+        return {
+          readTitleSnapshots: async (ids, signal) => {
+            sawSignal = true;
+            signal.throwIfAborted();
+            return [];
+          },
+        };
+      }
+      return undefined;
+    },
+  };
+  await assert.rejects(() => listWorkspaceSessions(ctx, '/a', controller.signal));
+  assert.ok(sawSignal, 'the caller signal must reach the corpus read');
 });
 
 test('workspaces resolve by path for delivery-time lookup', () => {

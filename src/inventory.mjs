@@ -96,8 +96,8 @@ export function isArchivedSession(inventory, sessionId) {
  *
  * This is the fallback path only: the `sessionTitle` service folds a session's
  * in-memory events, so it knows nothing about a session that is merely
- * persisted. {@link listWorkspaceTargets} prefers the session-query corpus and
- * uses this for the handful of sessions that are open right now.
+ * persisted. {@link listWorkspaceSessions} prefers the session-query corpus
+ * and uses this for the handful of sessions that are open right now.
  */
 export function sessionTitleFor(ctx, session) {
   if (!session) return '';
@@ -122,21 +122,84 @@ function titleFromSnapshot(result) {
 }
 
 /**
- * Resolve the picker's view: workspaces, each with its sessions titled where
- * the Host can name them.
+ * Resolve the picker's workspace view from the registry alone.
  *
- * Titles come from the session-query corpus, which folds each session's own
- * log: that is the only source that knows a session which is merely persisted.
- * Reading the live `sessionTitle` service instead leaves every historical
- * session blank — the "（无标题）" the picker showed for all of them.
+ * Sessions carry ids but no titles. Folding a title means reading and parsing
+ * the session's whole compressed log, and the live Host registers 387
+ * sessions — one of them a 319MB log — so folding every title on every page
+ * open held this call silent for minutes and the picker answered "0".
+ * Titles load per picked workspace through {@link listWorkspaceSessions}.
  *
- * Only the sessions a workspace actually lists are returned, because those are
- * the ones that can be a delivery target.
+ * Only the sessions a workspace actually lists are returned, because those
+ * are the ones that can be a delivery target.
  */
-export async function listWorkspaceTargets(ctx, signal) {
-  const workspaces = listWorkspaces(ctx);
-  const ids = [...new Set(workspaces.flatMap((workspace) => workspace.sessionIds))];
+export function listWorkspaceTargets(ctx) {
+  return listWorkspaces(ctx).map((workspace) => ({
+    workspaceId: workspace.workspaceId,
+    path: workspace.path,
+    title: workspace.title,
+    sessions: workspace.sessionIds.map((sessionId) => ({ sessionId, title: '' })),
+  }));
+}
 
+/**
+ * Fold titles for one workspace's sessions.
+ *
+ * Called for the workspace the user just picked, so the cost scales with that
+ * workspace instead of the whole Host. The caller bounds the wait:
+ * `readTitleSnapshots` rejects the complete batch when its signal aborts, and
+ * the picker then falls back to the registry ids.
+ *
+ * @param ctx - Host context carrying the registry and the corpus.
+ * @param workspacePath - workspace path exactly as the picker selected it.
+ * @param signal - cancellation shared by every log read in the batch.
+ * @returns one `{ sessionId, title }` per listed session, in registry order;
+ *   an unknown workspace resolves to an empty list.
+ */
+export async function listWorkspaceSessions(ctx, workspacePath, signal) {
+  const ids = workspaceSessionIds(ctx, workspacePath);
+  if (ids.length === 0) return [];
+  const titles = await foldSessionTitles(ctx, ids, signal);
+  return ids.map((sessionId) => ({
+    sessionId,
+    title: titles.get(sessionId) ?? '',
+  }));
+}
+
+/**
+ * Session ids one workspace lists, in registry order.
+ *
+ * Exposed so a caller can fold in chunks: read the ids here, fold a slice,
+ * and report progress without re-reading the registry between chunks.
+ *
+ * @returns ids, or an empty list for a workspace the registry does not have.
+ */
+export function workspaceSessionIds(ctx, workspacePath) {
+  const workspace = findWorkspaceByPath(listWorkspaces(ctx), workspacePath);
+  return workspace ? [...new Set(workspace.sessionIds)] : [];
+}
+
+/**
+ * Fold titles for an arbitrary set of session ids.
+ *
+ * This is what the title cache calls per chunk; {@link listWorkspaceSessions}
+ * is the one-shot form.
+ */
+export function foldTitles(ctx, ids, signal) {
+  return foldSessionTitles(ctx, ids, signal);
+}
+
+/**
+ * Fold titles from the session-query corpus, with the live service as the
+ * fallback for sessions that are open right now.
+ *
+ * The corpus is the only source that knows a session which is merely
+ * persisted: reading the live `sessionTitle` service instead leaves every
+ * historical session blank — the "（无标题）" the picker showed for all of
+ * them. A failure is isolated per session so one unreadable log cannot blank
+ * the whole batch; a cancellation propagates so an abandoned fold stops.
+ */
+async function foldSessionTitles(ctx, ids, signal) {
   const titles = new Map();
   const query = ctx?.get?.('sessionQuery');
   if (ids.length > 0 && query && typeof query.readTitleSnapshots === 'function') {
@@ -151,8 +214,11 @@ export async function listWorkspaceTargets(ctx, signal) {
           if (id && title) titles.set(id, title);
         });
       }
-    } catch {
-      // Titles are decoration: the picker still works on ids alone.
+    } catch (error) {
+      // Titles are decoration, but a caller that gave up must not keep this
+      // fold alive: pass the cancellation on and drop everything else.
+      signal?.throwIfAborted();
+      void error;
     }
   }
 
@@ -169,19 +235,10 @@ export async function listWorkspaceTargets(ctx, signal) {
         }
       }
     } catch {
-      // A live-store fault must not hide the workspace list.
+      // A live-store fault must not hide the titles already folded.
     }
   }
-
-  return workspaces.map((workspace) => ({
-    workspaceId: workspace.workspaceId,
-    path: workspace.path,
-    title: workspace.title,
-    sessions: workspace.sessionIds.map((sessionId) => ({
-      sessionId,
-      title: titles.get(sessionId) ?? '',
-    })),
-  }));
+  return titles;
 }
 
 /** Find one workspace by its path, for delivery-time resolution. */

@@ -350,6 +350,24 @@ export function distinctSenders(messages) {
 }
 
 /**
+ * Fill each sender's display name from a member-name lookup.
+ *
+ * Message reads carry an id and a sender type, never a name, so a picker
+ * built from messages alone shows bare `ou_…` ids. The member list names the
+ * same people under the same open ids. Names already on a sender win, and a
+ * sender the member list does not name keeps its id — the id is still the
+ * value the filter matches.
+ */
+export function applyMemberNames(senders, namesByOpenId) {
+  if (!(namesByOpenId instanceof Map) || namesByOpenId.size === 0) return senders;
+  return senders.map((sender) => {
+    if (!isRecord(sender) || sender.name) return sender;
+    const name = namesByOpenId.get(sender.id);
+    return typeof name === 'string' && name ? { ...sender, name } : sender;
+  });
+}
+
+/**
  * Fill the configured app bot's display name into a picker list.
  *
  * Chat reads never name app senders, so the app's own bot — usually

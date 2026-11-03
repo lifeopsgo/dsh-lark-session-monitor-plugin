@@ -27,7 +27,7 @@
 需要 **Node.js ≥ 22.6**。
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.1.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.2.0
 ```
 
 重启 DSH，然后刷新页面。打开 **设置 → 插件 → 飞书会话监听**。
@@ -36,7 +36,7 @@ dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2
 <summary>升级或卸载</summary>
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.1.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.2.0
 dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 ```
 
@@ -71,16 +71,35 @@ dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 | --- | --- |
 | **名称** | 可选标识 |
 | **会话类型** | 把选择列表筛选为 全部 / 私聊 / 群 |
-| **监听会话** | 要监听的会话；可输入文字筛选 |
+| **监听会话** | 要监听的会话；输入名称或 chat_id 筛选，匹配在你的全部会话中执行，被 `maxChats` 截掉的会话同样能搜到 |
 | **Prompt** | 置于消息正文之前一并发送 |
 | **目标工作区** | 目标会话所在的工作区 |
-| **目标会话** | 留空则自动创建 |
+| **目标会话** | 留空则自动创建；标题在选中工作区后分批载入并逐个出现，无标题的会话以 sessionId 显示 |
 | **过滤自己发送的消息** | 默认关闭；开启后不投递你本人发送的消息 |
-| **仅接收指定发送者** | 默认留空 = 所有发送者；可多选会话中出现过的用户/机器人，仅投递其消息（读不到名称的机器人以 App ID 显示） |
+| **仅接收指定发送者** | 默认留空 = 所有发送者；可多选会话中出现过的用户/机器人，仅投递其消息。姓名取自该会话的成员列表（`im:chat.members:read`），读不到姓名的成员显示其 open_id |
 | **也接收 @机器人 的消息** | 默认关闭；开启后 @本应用机器人 的消息即使发送者不在名单内也投递 |
 | **关键词黑名单** | 默认留空；消息渲染文本命中任一关键词即不投递（进度照常推进，不会卡住重读） |
 | **关键词白名单** | 默认留空 = 全部投递；配置后仅投递渲染文本命中任一关键词的消息；与黑名单同时命中时黑名单优先 |
 | **启用** | 该监听是否参与轮询 |
+
+## 配置参考
+
+Host 侧插件配置写在 loader 条目的 `config` 下（bundle 自带的 `cordis.patch.yml` 插入 id 为 `lark-session-monitor` 的条目）：
+
+| 配置 | 默认值 | 含义 |
+| --- | --- | --- |
+| `maxChats` | `500` | 会话选择器单次返回的会话数上限。列表按群组活跃时间倒序（飞书 `sort_type=ByActiveTimeDesc`）载入，超出的部分从最不活跃的一端截掉；关键词搜索在你的全部会话中执行，不受此上限影响 |
+| `rpcAuthority` | `trusted-host` | 设置端点的准入；`loopback` 额外要求回环 Host 与 Origin |
+| `autoStart` | `true` | 完成授权后是否自动开始轮询 |
+
+覆盖示例（`~/.dsh/cordis.patch.yml`）：
+
+```yaml
+- id: lark-session-monitor
+  name: 'dsh-lark-session-monitor-plugin'
+  config:
+    maxChats: 1000
+```
 
 ## 投递机制
 
@@ -121,6 +140,8 @@ dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 
 - **仅文本。** 图片、文件、音视频以类型标签投递。
 - **轮询而非推送。** 投递延迟受轮询间隔约束；离线期间的消息不会被补推（超出首次读取窗口的部分）。
+- **会话列表按活跃度截断。** 选择器按群组活跃时间倒序载入，超出 `maxChats` 的会话不出现在未筛选列表中（设置页会显示提示）；关键词搜索不受影响。飞书官方提示 `ByActiveTimeDesc` 排序在分页期间可能跳过活跃时间突变的个别会话，被跳过的会话会在下一次列表刷新（60 秒缓存过期后）出现。
+- **会话标题按工作区渐进载入。** 折叠一个标题要读取并解析该会话的完整日志，因此 `target.list` 只返回会话 id。标题在选中工作区后分批折叠：每批 4 个会话、每批 3 秒，界面先显示 id，标题逐个补齐，结果写入 `$DSH_HOME/plugin-data/dsh-lark-session-monitor-plugin/session-titles.json`，重启后不再重读。超出单批时限的会话以 id 显示，不再重试——一个巨型或损坏的日志不会拖住该工作区的其他会话。
 
 ## 许可证
 

@@ -192,10 +192,15 @@ export function normalizeSettings(input) {
 /** Where the settings document lives. */
 export const SETTINGS_FILE_NAME = 'settings.json';
 
+/** `$DSH_HOME/plugin-data/<plugin>`, matching other plugins. */
+export function pluginDataDir(env = process.env) {
+  const root = env.DSH_HOME || join(homedir(), '.dsh');
+  return join(root, 'plugin-data', 'dsh-lark-session-monitor-plugin');
+}
+
 /** `$DSH_HOME/plugin-data/<plugin>/settings.json`, matching other plugins. */
 export function settingsPath(env = process.env) {
-  const root = env.DSH_HOME || join(homedir(), '.dsh');
-  return join(root, 'plugin-data', 'dsh-lark-session-monitor-plugin', SETTINGS_FILE_NAME);
+  return join(pluginDataDir(env), SETTINGS_FILE_NAME);
 }
 
 /**

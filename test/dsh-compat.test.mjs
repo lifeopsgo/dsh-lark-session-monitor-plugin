@@ -17,9 +17,15 @@ async function manifest() {
   return JSON.parse(await readFile(packageUrl, 'utf8'));
 }
 
-test('the 2.1.0 release manifest matches the verified 0.2 runtime package surface', async () => {
+test('the release manifest matches the verified 0.2 runtime package surface', async () => {
   const pkg = await manifest();
-  assert.equal(pkg.version, '2.1.0', 'release version must be 2.1.0');
+  // The version itself is free to move; what must not move silently is the
+  // lockfile copy of it, which `npm install` would otherwise rewrite on the
+  // first run after a bump.
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/, 'release version must be a plain semver');
+  const lock = JSON.parse(await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'));
+  assert.equal(lock.version, pkg.version, 'package-lock.json version must match package.json');
+  assert.equal(lock.packages[''].version, pkg.version, 'the lockfile root package must match package.json');
   const dshPeers = Object.entries(pkg.peerDependencies)
     .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'));
 

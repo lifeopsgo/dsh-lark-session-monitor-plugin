@@ -69,6 +69,26 @@ test('a chat list survives arriving before the settings snapshot', () => {
   assert.ok(merged.settings);
 });
 
+test('a chat merge carries the total and truncation the list arrived with', () => {
+  const merged = mergeChats(null, [{ chatId: 'oc_1' }], { chatTotal: 656, chatsTruncated: true });
+  assert.equal(merged.chats.length, 1);
+  assert.equal(merged.chatTotal, 656);
+  assert.equal(merged.chatsTruncated, true);
+});
+
+test('a chat merge without counts falls back to the empty snapshot values', () => {
+  const merged = mergeChats(null, [{ chatId: 'oc_1' }]);
+  assert.equal(merged.chatTotal, 0);
+  assert.equal(merged.chatsTruncated, false);
+});
+
+test('a settings merge preserves the chat counts that already arrived', () => {
+  const withChats = mergeChats(null, [{ chatId: 'oc_1' }], { chatTotal: 656, chatsTruncated: true });
+  const merged = mergeSettings(withChats, settingsResponse());
+  assert.equal(merged.chatTotal, 656);
+  assert.equal(merged.chatsTruncated, true);
+});
+
 test('merging never mutates the previous snapshot', () => {
   const before = mergeSettings(null, settingsResponse());
   const frozen = JSON.parse(JSON.stringify(before));
@@ -82,6 +102,8 @@ test('the empty snapshot is a valid, renderable shape', () => {
   assert.deepEqual(EMPTY_SNAPSHOT.settings.monitors, []);
   assert.deepEqual(EMPTY_SNAPSHOT.targets, []);
   assert.deepEqual(EMPTY_SNAPSHOT.chats, []);
+  assert.equal(EMPTY_SNAPSHOT.chatTotal, 0);
+  assert.equal(EMPTY_SNAPSHOT.chatsTruncated, false);
   assert.equal(EMPTY_SNAPSHOT.authorization.authorized, false);
 });
 

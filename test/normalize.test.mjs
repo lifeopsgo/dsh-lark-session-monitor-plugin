@@ -10,6 +10,7 @@ import test from 'node:test';
 
 import {
   applyAppBotName,
+  applyMemberNames,
   composePrompt,
   matchesBlockedKeywords,
   distinctSenders,
@@ -239,6 +240,31 @@ test('matchesBlockedKeywords hits any keyword, case-insensitively', () => {
   assert.equal(matchesBlockedKeywords(text, []), false, 'empty list means no restriction');
   assert.equal(matchesBlockedKeywords(text, undefined), false);
   assert.equal(matchesBlockedKeywords('', ['x']), false);
+});
+
+test('applyMemberNames fills names from the member list without overwriting known ones', () => {
+  // The regression: a picker built from messages alone showed bare `ou_…`
+  // ids, because message reads carry no name. The member list names the same
+  // people under the same open ids.
+  const senders = [
+    { id: 'ou_a', name: '', type: 'user' },
+    { id: 'ou_b', name: '已有姓名', type: 'user' },
+    { id: 'ou_missing', name: '', type: 'user' },
+  ];
+  const names = new Map([['ou_a', '陆宝勤'], ['ou_b', '覆盖不得']]);
+  const named = applyMemberNames(senders, names);
+  assert.deepEqual(named, [
+    { id: 'ou_a', name: '陆宝勤', type: 'user' },
+    { id: 'ou_b', name: '已有姓名', type: 'user' },
+    { id: 'ou_missing', name: '', type: 'user' },
+  ]);
+});
+
+test('applyMemberNames leaves the list untouched without a usable lookup', () => {
+  const senders = [{ id: 'ou_a', name: '', type: 'user' }];
+  assert.equal(applyMemberNames(senders, new Map()), senders);
+  assert.equal(applyMemberNames(senders, undefined), senders);
+  assert.equal(applyMemberNames(senders, {}), senders);
 });
 
 test('applyAppBotName fills the configured bot name into the picker list', () => {

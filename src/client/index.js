@@ -34,7 +34,17 @@ const EP = Object.freeze({
   monitorReset: 'monitor.reset',
   monitorPollNow: 'monitor.pollNow',
   targetList: 'target.list',
+  targetSessions: 'target.sessions',
 });
+
+/**
+ * Per-request budget for one title chunk, in milliseconds. The Host folds a
+ * chunk inside its own shorter deadline; this only covers a slow round trip.
+ */
+const SESSION_TITLES_REQUEST_TIMEOUT_MS = 20_000;
+
+/** How long to wait between progressive title requests. */
+const SESSION_TITLES_POLL_MS = 250;
 
 /** Unwrap the Connection RPC envelope, turning a failure into a throw. */
 function unwrap(result, method) {
@@ -202,10 +212,24 @@ const SEARCH_SELECT_LIMIT = 60;
  * closed, so the control still reads as a selected value.
  *
  * Options are `{ value, label, hint }`; `hint` renders dimmed on the right.
+ * `onQuery` reports every query transition — including the resets on focus
+ * and blur — so a caller can run the matching against more than the options
+ * it already holds. The chat picker uses it to search the Host's full
+ * conversation list: a browser-side filter only ever sees the capped slice
+ * `chat.list` returned, which is how a chat beyond the cap stayed unfindable
+ * under every query.
  */
-function SearchSelect({ options, value, onChange, placeholder, emptyText }) {
+function SearchSelect({ options, value, onChange, placeholder, emptyText, onQuery }) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
+
+  // Local filtering stays: it narrows instantly while a host-side search is
+  // still in flight, and the two never disagree because the Host mirrors
+  // this exact matching rule.
+  const applyQuery = (next) => {
+    setQuery(next);
+    onQuery?.(next);
+  };
 
   const selected = options.find((option) => option.value === value);
   const matches = React.useMemo(() => {
@@ -235,11 +259,11 @@ function SearchSelect({ options, value, onChange, placeholder, emptyText }) {
       placeholder: placeholder ?? '输入以筛选…',
       role: 'combobox',
       'aria-expanded': open,
-      onFocus: () => { setOpen(true); setQuery(''); },
-      onBlur: () => { setOpen(false); setQuery(''); },
-      onChange: (e) => { setQuery(e.target.value); setOpen(true); },
+      onFocus: () => { setOpen(true); applyQuery(''); },
+      onBlur: () => { setOpen(false); applyQuery(''); },
+      onChange: (e) => { applyQuery(e.target.value); setOpen(true); },
       onKeyDown: (e) => {
-        if (e.key === 'Escape') { setOpen(false); setQuery(''); e.currentTarget.blur(); }
+        if (e.key === 'Escape') { setOpen(false); applyQuery(''); e.currentTarget.blur(); }
         if (e.key === 'Enter' && shown.length === 1) { e.preventDefault(); choose(shown[0]); }
       },
     }),
@@ -292,11 +316,33 @@ const EMPTY_DRAFT = Object.freeze({
   enabled: true,
 });
 
+/**
+ * One sender's picker text.
+ *
+ * A p2p chat is named after its counterpart, which covers a third-party bot
+ * the app identity cannot reach. Otherwise a resolved name wins and the open
+ * id follows it as the disambiguator; with no name, the id stands alone and
+ * the caller marks it as unnamed.
+ */
+function senderLabelText(sender, p2pChatName) {
+  const name = typeof sender?.name === 'string' ? sender.name.trim() : '';
+  const id = typeof sender?.id === 'string' ? sender.id : '';
+  if (sender?.type === 'bot' && p2pChatName) return p2pChatName;
+  if (name && id) return `${name}（${id.slice(0, 12)}…）`;
+  return name || id || '未知发送者';
+}
+
 /** The monitor editor form. */
-function MonitorEditor({ draft, setDraft, chats, targets, senders, onSave, onCancel, busy, error }) {
+function MonitorEditor({
+  draft, setDraft, chats, targets, senders, onSave, onCancel, busy, error,
+  onChatQuery, chatsTruncated, chatTotal, sessionTargets, sessionTargetsPending,
+}) {
   const update = (patch) => setDraft({ ...draft, ...patch });
   const [chatKind, setChatKind] = React.useState('all');
-  const workspaceSessions = targets.find((w) => w.path === draft.workspace)?.sessions ?? [];
+  // The page supplies titled sessions for the drafted workspace; the
+  // registry ids stand in until the fold lands, so the picker is never
+  // blocked on a title read.
+  const workspaceSessions = sessionTargets;
   // A p2p chat is named after its counterpart, so a bot's display name is
   // right there — covering third-party bots the app identity cannot reach.
   const chat = chats.find((c) => c.chatId === draft.chatId);
@@ -306,6 +352,10 @@ function MonitorEditor({ draft, setDraft, chats, targets, senders, onSave, onCan
     if (chatKind === 'all') return chats;
     return chats.filter((chat) => (chat.chatType === 'p2p' ? 'p2p' : 'group') === chatKind);
   }, [chats, chatKind]);
+
+  // A Host older than the `total` field answers without it; the list length
+  // is the honest fallback for the hint rather than a bogus zero.
+  const knownChatTotal = Math.max(chatTotal ?? 0, chats.length);
 
   const chatOptions = React.useMemo(() => visibleChats.map((chat) => ({
     value: chat.chatId,
@@ -337,8 +387,15 @@ function MonitorEditor({ draft, setDraft, chats, targets, senders, onSave, onCan
           value: draft.chatId,
           placeholder: '输入名称或 chat_id 以筛选…',
           emptyText: chatKind === 'p2p' ? '没有匹配的私聊' : '没有匹配的会话',
+          onQuery: onChatQuery,
           onChange: (option) => update({ chatId: option.value, chatName: option.label }),
-        })),
+        }),
+        // The cap is visible, never silent: before this hint a truncated
+        // list read as "these are all my conversations".
+        chatsTruncated
+          ? h('span', { className: 'lsm-hint' },
+              `共 ${knownChatTotal} 个会话，已按活跃度载入前 ${chats.length} 个；输入名称或 chat_id 可在全部会话中搜索`)
+          : null),
     ),
     h(Field, { label: 'Prompt（新消息将追加在此提示词之后）' },
       h('textarea', {
@@ -359,7 +416,7 @@ function MonitorEditor({ draft, setDraft, chats, targets, senders, onSave, onCan
           emptyText: '没有匹配的工作区',
           onChange: (option) => update({ workspace: option.value, sessionId: '' }),
         })),
-      h(Field, { label: '目标会话（留空 = 自动创建）' },
+      h(Field, { label: `目标会话（${workspaceSessions.length} 个，留空 = 自动创建）` },
         h(SearchSelect, {
           options: workspaceSessions.map((s) => ({
             value: s.sessionId,
@@ -382,7 +439,11 @@ function MonitorEditor({ draft, setDraft, chats, targets, senders, onSave, onCan
             sessionId: option.value,
             sessionTitle: option.title ?? '',
           }),
-        })),
+        }),
+        sessionTargetsPending
+          ? h('span', { className: 'lsm-hint' },
+              '正在读取该工作区的会话标题，标题会逐个出现；无标题的会话以 sessionId 显示')
+          : null),
     ),
     // Source filtering: an empty sender list and an unchecked mention box
     // mean "every message", which is also the default for saved monitors.
@@ -408,7 +469,11 @@ function MonitorEditor({ draft, setDraft, chats, targets, senders, onSave, onCan
                     }),
                   }),
                   h('span', { className: 'lsm-hint' },
-                    `${sender.type === 'bot' && chatIsP2P && chat?.name ? chat.name : (sender.name || sender.id)}（${sender.type === 'bot' ? '机器人' : '用户'}）`))))),
+                    // Name first, id as the disambiguator when both are
+                    // known. Without a name the id is all there is — and an
+                    // `ou_…` id says nothing about who it is, so say so
+                    // rather than presenting it as a person's name.
+                    `${senderLabelText(sender, chatIsP2P ? chat?.name : '')}（${sender.type === 'bot' ? '机器人' : (sender.name ? '用户' : '用户，未能读取姓名')}）`))))),
     h('label', { className: 'lsm-inline' },
       h('input', {
         type: 'checkbox', checked: draft.alsoBotMention === true,
@@ -529,8 +594,8 @@ export function LarkMonitorPage({ rpcCall }) {
   const [notice, setNotice] = React.useState('');
   const [editorError, setEditorError] = React.useState('');
 
-  const invoke = React.useCallback(async (method, payload = {}) => {
-    const value = unwrap(await rpcCall(method, payload), method);
+  const invoke = React.useCallback(async (method, payload = {}, signal) => {
+    const value = unwrap(await rpcCall(method, payload, signal), method);
     return value;
   }, [rpcCall]);
 
@@ -554,7 +619,10 @@ export function LarkMonitorPage({ rpcCall }) {
       }));
       if (data.authorization.authorized) {
         const list = await invoke(EP.chatList, { force: forceChats });
-        setSnapshot((prev) => mergeChats(prev, list.chats));
+        setSnapshot((prev) => mergeChats(prev, list.chats, {
+          chatTotal: list.total,
+          chatsTruncated: list.truncated === true,
+        }));
       }
       setError('');
     } catch (err) {
@@ -572,6 +640,81 @@ export function LarkMonitorPage({ rpcCall }) {
     } catch (err) {
       setError(`加载工作区失败：${err.message}`);
     }
+  }, [invoke]);
+
+  // Session titles load per picked workspace, in chunks. Folding one title
+  // reads and parses that session's whole log, and a large workspace holds a
+  // 334MB log — a single batch took 61 seconds and timed out, so every row
+  // stayed an id. Each request here folds one chunk and answers with what it
+  // has plus `pending`; ids show immediately and titles fill in.
+  const [sessionTargets, setSessionTargets] = React.useState({ workspace: '', sessions: [] });
+  const [pendingTargets, setPendingTargets] = React.useState('');
+  const draftWorkspace = draft?.workspace ?? '';
+
+  React.useEffect(() => {
+    if (!draftWorkspace) return undefined;
+    let cancelled = false;
+    let pollTimer;
+
+    const step = async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), SESSION_TITLES_REQUEST_TIMEOUT_MS);
+      let more = false;
+      try {
+        const data = await invoke(EP.targetSessions, { workspace: draftWorkspace }, controller.signal);
+        if (cancelled) return;
+        setSessionTargets({ workspace: draftWorkspace, sessions: data?.sessions ?? [] });
+        more = data?.pending === true;
+      } catch {
+        // A failed chunk keeps the titles already shown. Stop polling: the
+        // Host marks a chunk it could not fold, so retrying adds nothing.
+        more = false;
+      } finally {
+        clearTimeout(timer);
+      }
+      if (cancelled) return;
+      if (more) pollTimer = setTimeout(step, SESSION_TITLES_POLL_MS);
+      else setPendingTargets((prev) => (prev === draftWorkspace ? '' : prev));
+    };
+
+    setPendingTargets(draftWorkspace);
+    void step();
+    return () => {
+      cancelled = true;
+      clearTimeout(pollTimer);
+    };
+  }, [draftWorkspace, invoke]);
+
+  /**
+   * Chat search on the Host side.
+   *
+   * The query crosses the RPC so matching runs against every conversation
+   * the user is in: the options this page holds are capped by `maxChats`, and
+   * a browser-side filter cannot find what was never delivered to it. The
+   * debounce keeps a keystroke burst from becoming an RPC burst, and the
+   * sequence number drops a slow answer that belongs to an older query —
+   * whichever response lands last must be the one for the current query.
+   */
+  const chatSearch = React.useRef({ seq: 0, timer: null });
+  const searchChats = React.useCallback((query) => {
+    const state = chatSearch.current;
+    state.seq += 1;
+    const seq = state.seq;
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      invoke(EP.chatList, { query })
+        .then((list) => {
+          if (chatSearch.current.seq !== seq) return;
+          setSnapshot((prev) => mergeChats(prev, list.chats, {
+            chatTotal: list.total,
+            chatsTruncated: list.truncated === true,
+          }));
+        })
+        .catch(() => {
+          // A failed search keeps the list the picker already has.
+        });
+    }, 200);
   }, [invoke]);
 
   /**
@@ -641,6 +784,12 @@ export function LarkMonitorPage({ rpcCall }) {
   const chats = snapshot.chats ?? [];
   const targets = snapshot.targets ?? [];
   const statuses = new Map((snapshot.runtime ?? []).map((s) => [s.monitorId, s]));
+  // Titled sessions for the drafted workspace, or the registry ids while the
+  // fold is in flight, failed, or still bounded by its deadline.
+  const titledSessionTargets = sessionTargets.workspace === draftWorkspace && draftWorkspace
+    ? sessionTargets.sessions
+    : targets.find((w) => w.path === draftWorkspace)?.sessions ?? [];
+  const sessionTargetsPending = pendingTargets !== '' && pendingTargets === draftWorkspace;
 
   return h('div', { className: 'lsm-root' },
     // ---- app credentials ----
@@ -734,6 +883,11 @@ export function LarkMonitorPage({ rpcCall }) {
 
       draft ? h(MonitorEditor, {
         draft, setDraft, chats, targets, senders, busy, error: editorError,
+        onChatQuery: searchChats,
+        chatsTruncated: snapshot.chatsTruncated === true,
+        chatTotal: snapshot.chatTotal ?? chats.length,
+        sessionTargets: titledSessionTargets,
+        sessionTargetsPending,
         onCancel: () => setDraft(null),
         onSave: () => run(async () => {
           setEditorError('');

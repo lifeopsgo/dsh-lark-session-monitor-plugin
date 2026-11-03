@@ -28,6 +28,9 @@ export const EMPTY_SNAPSHOT = Object.freeze({
   authorization: { authorized: false, scope: '', expiresAt: null, needsRefresh: false },
   runtime: [],
   chats: [],
+  /** Full conversation count and cap state as the last `chat.list` reported. */
+  chatTotal: 0,
+  chatsTruncated: false,
   targets: [],
 });
 
@@ -44,6 +47,8 @@ export function mergeSettings(previous, data) {
   const merged = { ...data };
   if (previous?.targets !== undefined) merged.targets = previous.targets;
   if (previous?.chats !== undefined) merged.chats = previous.chats;
+  if (previous?.chatTotal !== undefined) merged.chatTotal = previous.chatTotal;
+  if (previous?.chatsTruncated !== undefined) merged.chatsTruncated = previous.chatsTruncated;
   return merged;
 }
 
@@ -59,8 +64,19 @@ export function mergeTargets(previous, targets) {
   return { ...base, targets };
 }
 
-/** Merge a chat list, tolerating arrival before the settings snapshot. */
-export function mergeChats(previous, chats) {
+/**
+ * Merge a chat list, tolerating arrival before the settings snapshot.
+ *
+ * `extra` carries what `chat.list` reported alongside the list — the full
+ * conversation total and whether the maxChats cap cut the response — because
+ * a bare chats array drops exactly the flag that makes a truncated picker
+ * honest about what it is showing.
+ */
+export function mergeChats(previous, chats, extra = {}) {
   const base = previous ?? EMPTY_SNAPSHOT;
-  return { ...base, chats };
+  const merged = { ...base, chats };
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined) merged[key] = value;
+  }
+  return merged;
 }

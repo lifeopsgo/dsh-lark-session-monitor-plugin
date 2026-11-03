@@ -16,17 +16,22 @@
  * @module dsh-lark-session-monitor-plugin
  */
 
+import { join } from 'node:path';
+
 import Schema from '@deepseek-ai/schemastery';
 
 import { Authorizer } from './auth.mjs';
 import { fetchAppBotIdentity } from './bot-identity.mjs';
 import { SessionDeliverer, HarnessGateway } from './deliver.mjs';
-import { listInventory, listWorkspaceTargets } from './inventory.mjs';
+import {
+  foldTitles, listInventory, listWorkspaceTargets, workspaceSessionIds,
+} from './inventory.mjs';
 import { LarkUserClient } from './lark-api.mjs';
-import { applyAppBotName, distinctSenders } from './normalize.mjs';
+import { applyAppBotName, applyMemberNames, distinctSenders } from './normalize.mjs';
 import { MonitorRuntime } from './runtime.mjs';
 import { registerSettingsRpc } from './rpc.mjs';
-import { MonitorStore, publicSettings } from './store.mjs';
+import { MonitorStore, pluginDataDir, publicSettings } from './store.mjs';
+import { createTitleCache } from './title-cache.mjs';
 
 export const name = 'dsh-lark-session-monitor-plugin';
 
@@ -73,6 +78,24 @@ function intervalReader(store) {
   return () => store.snapshot().pollIntervalMs;
 }
 
+/**
+ * Chats matching a picker query.
+ *
+ * Mirrors the browser-side filter exactly — a case-insensitive substring on
+ * the name or the chat id — so the host-side search and the client-side
+ * narrowing never disagree about what a query finds.
+ */
+export function chatsMatchingQuery(chats, query) {
+  const list = Array.isArray(chats) ? chats : [];
+  const needle = typeof query === 'string' ? query.trim().toLowerCase() : '';
+  if (!needle) return list;
+  return list.filter((chat) => {
+    const name = typeof chat?.name === 'string' ? chat.name.toLowerCase() : '';
+    const chatId = typeof chat?.chatId === 'string' ? chat.chatId.toLowerCase() : '';
+    return name.includes(needle) || chatId.includes(needle);
+  });
+}
+
 export function apply(ctx, config) {
   // The Loader applies Config before activation. Calling it here as well keeps
   // direct programmatic use and the smoke tests on the identical contract.
@@ -89,7 +112,15 @@ export function apply(ctx, config) {
   const store = new MonitorStore();
   const authorizer = new Authorizer({ credentials, store });
   const runtime = { current: null };
-  const chats = { cache: new Map(), at: 0 };
+  const chats = { cache: new Map(), at: 0, inflight: null };
+  // Session titles fold in chunks, because one log can take a minute: the
+  // picker renders ids at once and improves as titles arrive. The cache is
+  // on disk so a restart does not re-read every log.
+  const titles = createTitleCache({
+    fold: (ids, signal) => foldTitles(ctx, ids, signal),
+    file: join(pluginDataDir(), 'session-titles.json'),
+    logger,
+  });
 
   const harnessGateway = () => {
     const gateway = optional(ctx, 'typertGateway');
@@ -191,11 +222,19 @@ export function apply(ctx, config) {
     // The chat list changes rarely; a minute of caching keeps the settings
     // page responsive while typing without hammering the Feishu API.
     if (!force && chats.cache.size > 0 && now - chats.at < 60_000) return [...chats.cache.values()];
-    await requireAuthorized();
-    const list = await clientFor().listChats();
-    chats.cache = new Map(list.map((chat) => [chat.chatId, chat]));
-    chats.at = now;
-    return list;
+    // Single-flight: the picker now sends a query per debounced keystroke,
+    // so a burst crossing the cache window must share one Feishu read rather
+    // than fanning out into parallel paginated fetches.
+    if (!chats.inflight) {
+      chats.inflight = (async () => {
+        await requireAuthorized();
+        const list = await clientFor().listChats();
+        chats.cache = new Map(list.map((chat) => [chat.chatId, chat]));
+        chats.at = Date.now();
+        return list;
+      })().finally(() => { chats.inflight = null; });
+    }
+    return chats.inflight;
   };
 
   const endpoint = {
@@ -259,7 +298,16 @@ export function apply(ctx, config) {
       const force = payload?.force === true;
       const list = await cachedChats(force);
       const limit = settings.maxChats;
-      return { chats: list.slice(0, limit), truncated: list.length > limit };
+      // A query filters the whole list before the cap: the cap bounds the
+      // response payload, never what a search can reach. Filtering after the
+      // slice is how a chat at index 537 of 656 went unfindable while the
+      // picker held only the first 500.
+      const matched = chatsMatchingQuery(list, payload?.query);
+      return {
+        chats: matched.slice(0, limit),
+        total: list.length,
+        truncated: matched.length > limit,
+      };
     },
 
     /**
@@ -286,6 +334,15 @@ export function apply(ctx, config) {
         signal,
       });
       let senders = distinctSenders(messages);
+      // Message reads carry an id and a type, never a name, so without this
+      // the picker offers bare `ou_…` open ids the user cannot recognize.
+      // The member list names the same people under the same ids. Best
+      // effort: a group whose members are not listable keeps its ids.
+      try {
+        senders = applyMemberNames(senders, await clientFor().chatMemberNames(chatId, { signal }));
+      } catch {
+        // Keep the id-only label; the id is still what the filter matches.
+      }
       // The list API does not name app senders; fill in the configured
       // app's own bot when it appears — usually exactly the bot being
       // tested. Best effort: a failed lookup must not break the picker.
@@ -356,14 +413,40 @@ export function apply(ctx, config) {
       return runtime.current.status();
     },
 
-    /** Workspaces and their sessions, for the delivery-target picker. */
-    async 'target.list'(payload, signal) {
-      // Read the registry directly. The Remote `workspace.follow` stream is
-      // the documented path, but it must be opened, read once and aborted, and
-      // on this Host that read answered empty while the registry held twenty
-      // workspaces — the picker showed "0" against a fully populated Host.
+    /**
+     * Workspaces for the delivery-target picker, from the registry alone.
+     *
+     * The Remote `workspace.follow` stream is the documented path, but it
+     * must be opened, read once and aborted, and on this Host that read
+     * answered empty while the registry held twenty workspaces. Sessions
+     * carry ids only: folding every session's title reads and parses every
+     * registered log — minutes on a large Host — and the picker answered "0"
+     * the whole time. Titles load per picked workspace through
+     * `target.sessions`.
+     */
+    'target.list'(payload) {
       void payload;
-      return { workspaces: await listWorkspaceTargets(ctx, signal) };
+      return { workspaces: listWorkspaceTargets(ctx) };
+    },
+
+    /**
+     * Sessions of one workspace, titled as far as the cache has folded.
+     *
+     * One call folds one chunk under a short deadline and answers with what
+     * is known, plus `pending` when more remains. The picker renders ids
+     * immediately and polls while `pending` holds — a workspace whose logs
+     * take a minute fills in progressively instead of timing out empty.
+     */
+    async 'target.sessions'(payload, signal) {
+      const workspace = typeof payload?.workspace === 'string' ? payload.workspace : '';
+      if (!workspace) return { workspace: '', sessions: [], pending: false };
+      const ids = workspaceSessionIds(ctx, workspace);
+      const { titles: folded, pending } = await titles.resolve(ids, signal);
+      return {
+        workspace,
+        sessions: ids.map((sessionId) => ({ sessionId, title: folded.get(sessionId) ?? '' })),
+        pending,
+      };
     },
   };
 

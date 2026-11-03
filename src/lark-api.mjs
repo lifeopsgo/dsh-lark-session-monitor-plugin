@@ -107,7 +107,7 @@ export class LarkUserClient {
   }
 
   /**
-   * List the conversations the user is in.
+   * List the conversations the user is in, most recently active first.
    *
    * The `types` parameter is what makes p2p conversations appear: without it
    * this endpoint returns only groups, which is why a monitor picker that
@@ -115,17 +115,30 @@ export class LarkUserClient {
    * comma-separated list, and both are requested together because the monitor
    * is not specific to one kind.
    *
+   * `ByActiveTimeDesc` is one of the two sort values this endpoint accepts
+   * (the documented pair is ByCreateTimeAsc / ByActiveTimeDesc; the API
+   * rejects ByCreateTimeDesc with 99992402). Active-first order serves the
+   * picker: when `maxChats` caps the response, the cap drops the
+   * long-inactive tail instead of the newest chats — which is how a freshly
+   * created group went missing under the old ByCreateTimeAsc read. Feishu's
+   * docs warn that activity re-sorting can skip a chat that becomes active
+   * mid-pagination; that is acceptable here because the picker list is the
+   * only consumer of this read (monitors poll by chat_id and never consult
+   * it), a skipped chat returns on the next cache refresh, and the duplicate
+   * side of the same race is dropped by the id dedupe below.
+   *
    * @param options.types - `'p2p'`, `'group'`, or both; defaults to both.
    */
   async listChats({ pageSize = 100, types = 'p2p,group', signal } = {}) {
     const chats = [];
+    const seen = new Set();
     let pageToken;
     for (let page = 0; page < 50; page += 1) {
       const data = await this.#request('/open-apis/im/v1/chats', {
         query: {
           page_size: pageSize,
           page_token: pageToken,
-          sort_type: 'ByCreateTimeAsc',
+          sort_type: 'ByActiveTimeDesc',
           types,
         },
         signal,
@@ -133,6 +146,10 @@ export class LarkUserClient {
       for (const item of data?.items ?? []) {
         const chatId = item?.chat_id;
         if (typeof chatId !== 'string' || !chatId) continue;
+        // The same chat can appear on two pages when activity re-sorting
+        // shifts the page boundary between requests.
+        if (seen.has(chatId)) continue;
+        seen.add(chatId);
         chats.push({
           chatId,
           name: typeof item?.name === 'string' && item.name.trim() ? item.name.trim() : '',
@@ -200,6 +217,40 @@ export class LarkUserClient {
       userId: typeof data?.user_id === 'string' ? data.user_id : '',
       name: typeof data?.name === 'string' ? data.name.trim() : '',
     };
+  }
+
+  /**
+   * Resolve display names for the members of one conversation.
+   *
+   * Message reads never carry a sender's name — `sender` holds an id and a
+   * type only — so a source picker built from messages alone shows bare
+   * `ou_…` open ids. The member list does carry names, and
+   * `im:chat.members:read` is already granted to the same user token that
+   * reads messages. A conversation the user cannot list members of (an
+   * external group, a p2p chat) throws; the caller keeps its id-only label.
+   *
+   * @returns open id to display name, omitting members the API does not name.
+   */
+  async chatMemberNames(chatId, { signal, pageSize = 100, maxPages = 20 } = {}) {
+    const names = new Map();
+    let pageToken;
+    for (let page = 0; page < maxPages; page += 1) {
+      const data = await this.#request(
+        `/open-apis/im/v1/chats/${encodeURIComponent(chatId)}/members`,
+        {
+          query: { member_id_type: 'open_id', page_size: pageSize, page_token: pageToken },
+          signal,
+        },
+      );
+      for (const item of data?.items ?? []) {
+        const id = item?.member_id;
+        const name = typeof item?.name === 'string' ? item.name.trim() : '';
+        if (typeof id === 'string' && id && name) names.set(id, name);
+      }
+      if (!data?.has_more || !data?.page_token) break;
+      pageToken = data.page_token;
+    }
+    return names;
   }
 
   /** Resolve display names for chat ids; failures degrade to the raw id. */
