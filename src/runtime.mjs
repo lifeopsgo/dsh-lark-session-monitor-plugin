@@ -155,6 +155,9 @@ export class MonitorRuntime {
       this.#logger.warn?.(
         '[lark-session-monitor] could not load your Feishu identity; own messages cannot be filtered: '
         + `${error instanceof Error ? error.message : String(error)}`,
+        // The error object rides along: the Host log keeps the stack, which a
+        // message-only line loses forever.
+        error,
       );
     }
     return this.#identityCache.identity;
@@ -177,9 +180,14 @@ export class MonitorRuntime {
       return this.#botIdCache;
     } catch (error) {
       // Keep the platform's own reason, but with enough context for the
-      // settings page to say what to fix.
+      // settings page to say what to fix. The cause link keeps the original
+      // stack reachable: Host dumps render [cause] chains, so a wrapped
+      // failure still carries the frame that threw it.
       const reason = error instanceof Error ? error.message : String(error);
-      throw new Error(`无法识别本应用的机器人身份（${reason}）：请确认应用已启用机器人能力，且 App ID 与 App Secret 有效。`);
+      throw new Error(
+        `无法识别本应用的机器人身份（${reason}）：请确认应用已启用机器人能力，且 App ID 与 App Secret 有效。`,
+        { cause: error },
+      );
     }
   }
 
@@ -294,6 +302,11 @@ export class MonitorRuntime {
       this.#setState(monitor.monitorId, { lastError: message, lastPollAt: this.#now() });
       this.#logger.warn?.(
         `[lark-session-monitor] poll failed for ${monitor.monitorId}: ${message}`,
+        // The error object keeps the stack in the Host log and startup dumps.
+        // The 2026-10-25 incident lost its origin precisely because only the
+        // message was recorded: the failure surfaced as a bare TypeError text
+        // with no traceable frame.
+        error,
       );
     }
   }

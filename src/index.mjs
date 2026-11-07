@@ -28,6 +28,7 @@ import {
 } from './inventory.mjs';
 import { LarkUserClient } from './lark-api.mjs';
 import { applyAppBotName, applyMemberNames, distinctSenders } from './normalize.mjs';
+import { acquirePollerLock, releasePollerLock } from './poller-lock.mjs';
 import { MonitorRuntime } from './runtime.mjs';
 import { registerSettingsRpc } from './rpc.mjs';
 import { MonitorStore, pluginDataDir, publicSettings } from './store.mjs';
@@ -185,8 +186,48 @@ export function apply(ctx, config) {
     return identity;
   };
 
+  // The poller lock spans processes. The plugin-data directory is shared by
+  // every DSH instance of this user, and the store keeps its cursors in
+  // memory: two instances polling at once each deliver the same messages. A
+  // double-opened profile did exactly that — the second instance came up
+  // half-booted and started polling beside the first.
+  let pollerLockHeld = false;
+  let pollerRetryTimer = null;
+  let runtimeDisposed = false;
+
+  const clearPollerRetry = () => {
+    if (pollerRetryTimer !== null) {
+      clearTimeout(pollerRetryTimer);
+      pollerRetryTimer = null;
+    }
+  };
+
+  const schedulePollerRetry = () => {
+    if (runtimeDisposed || pollerRetryTimer !== null) return;
+    const interval = Math.max(5_000, Number(store.snapshot().pollIntervalMs) || 30_000);
+    pollerRetryTimer = setTimeout(() => {
+      pollerRetryTimer = null;
+      if (runtimeDisposed || runtime.current) return;
+      if (!settings.autoStart || !store.snapshot().app.appId) return;
+      // The holder may be a stale instance that crashed after refusing us;
+      // retrying is how the poller recovers without a manual settings action.
+      start();
+    }, interval);
+    pollerRetryTimer.unref?.();
+  };
+
   const start = () => {
     if (runtime.current) return;
+    clearPollerRetry();
+    const lock = acquirePollerLock(pluginDataDir());
+    if (!lock.ok) {
+      logger.warn?.(
+        `[lark-session-monitor] another poller (pid ${lock.holderPid ?? 'unknown'}) is active — ${lock.path}; this instance will not poll to avoid double delivery`,
+      );
+      schedulePollerRetry();
+      return;
+    }
+    pollerLockHeld = true;
     const instance = new MonitorRuntime({
       store,
       deliverer,
@@ -202,8 +243,13 @@ export function apply(ctx, config) {
   };
 
   const stop = () => {
+    clearPollerRetry();
     runtime.current?.stop();
     runtime.current = null;
+    if (pollerLockHeld) {
+      releasePollerLock(pluginDataDir());
+      pollerLockHeld = false;
+    }
   };
 
   // ---- settings endpoint ------------------------------------------------
@@ -511,6 +557,7 @@ export function apply(ctx, config) {
     void reportWorkspaceRead();
     return () => {
       disposed = true;
+      runtimeDisposed = true;
       stop();
     };
   }, 'dsh-lark-session-monitor-plugin: runtime lifecycle');
