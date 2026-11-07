@@ -35,6 +35,7 @@
     "cordis.patch.yml",
     "LICENSE",
     "README.md",
+    "README.en.md",
     "README.zh-CN.md"
   ],
   "license": "MIT",

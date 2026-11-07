@@ -4,7 +4,7 @@
 
 **以你本人的身份监听飞书（Lark）会话，把新消息投递到指定的 DeepSeek Harness 会话。**
 
-[English](./README.md) · **简体中文**
+[简明版](./README.md) · **详细说明** · [English](./README.en.md)
 
 <img alt="「飞书会话监听」设置页" src="./docs/setting-page.png" width="620">
 
@@ -27,7 +27,7 @@
 需要 **Node.js ≥ 22.6**。
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.2.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.3.0
 ```
 
 重启 DSH，然后刷新页面。打开 **设置 → 插件 → 飞书会话监听**。
@@ -36,7 +36,7 @@ dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2
 <summary>升级或卸载</summary>
 
 ```bash
-dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.2.0
+dsh plugin --profile web add github:lifeopsgo/dsh-lark-session-monitor-plugin#v2.3.0
 dsh plugin --profile web remove dsh-lark-session-monitor-plugin
 ```
 
@@ -124,6 +124,7 @@ Host 侧插件配置写在 loader 条目的 `config` 下（bundle 自带的 `cor
 | 留空 | ⬜ | 每条消息都新建一个会话 |
 
 **轮询。** 同一监听同时只跑一轮。单条 prompt 最多 **10 条消息**，其余在本次投递后继续。游标只在投递成功后推进，因此投递失败会重读该批消息。
+**多实例互斥。** 同一 `$DSH_HOME` 下同时只有一个 DSH 实例轮询：插件数据目录里的锁文件（记录持有者 pid）只放行一个轮询者，其余实例告警并按轮询间隔重试，持有者退出后自动接管——两个实例不会把同一批消息投递两遍。
 
 **自己的消息。** 监听可以过滤掉你本人发送的消息；若无法读取你的身份，则照旧投递。
 **消息来源筛选。** 发送者名单把监听收窄到指定发送者（候选来自该会话最近的发言者）；「也接收 @机器人」把它放宽一格：@本应用机器人的消息即使发送者不在名单里也投递——被点名本身就是信号。名单留空 + 开关打开 = 只收 @机器人 的消息；两者都不设即照旧接收全部。机器人身份用应用自身的凭据解析，无需新增授权；解析失败时本轮挂起——不投递也不丢消息，每次轮询自动重试。
