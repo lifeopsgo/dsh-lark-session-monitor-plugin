@@ -123,10 +123,28 @@ export function apply(ctx, config) {
     logger,
   });
 
+  // The Host gateway names the Peer each call speaks for and reads `peer.signal`
+  // before it reaches the method. A call without a Peer throws "Cannot read
+  // properties of undefined (reading 'signal')" — which is why every delivery
+  // failed while the read path (sessions, inventory) stayed healthy.
+  //
+  // One long-lived in-process Peer speaks for the local user, matching what a
+  // host-side caller is: the plugin delivers on this machine, not on behalf of
+  // a browser tab. It is created lazily with the gateway and disposed with the
+  // plugin effect below.
+  let deliveryPeer = null;
+  const peerForDelivery = () => {
+    if (deliveryPeer) return deliveryPeer;
+    const connection = optional(ctx, 'connection');
+    if (typeof connection?.createPeer !== 'function') return undefined;
+    deliveryPeer = connection.createPeer({ principal: { kind: 'owner' }, interactions: 'none' });
+    return deliveryPeer;
+  };
+
   const harnessGateway = () => {
     const gateway = optional(ctx, 'typertGateway');
     if (!gateway) throw new Error('Host Typert gateway is unavailable.');
-    return new HarnessGateway({ gateway });
+    return new HarnessGateway({ gateway, peer: peerForDelivery() });
   };
 
   // Built lazily: the gateway is only needed once a delivery or target lookup
@@ -431,7 +449,7 @@ export function apply(ctx, config) {
       await store.advanceCursor(monitorId, {
         lastCreateTimeMs: payload?.sinceMs ?? (Date.now() - 10 * 60_000),
         lastMessageId: '',
-      });
+      }, { force: true });
       runtime.current?.forget(monitorId);
       return store.monitor(monitorId);
     },
@@ -559,6 +577,11 @@ export function apply(ctx, config) {
       disposed = true;
       runtimeDisposed = true;
       stop();
+      // Tear down the delivery Peer with the plugin: its registrations live in
+      // this Context's scope, so leaving it alive would outlast the plugin.
+      const peer = deliveryPeer;
+      deliveryPeer = null;
+      try { void peer?.dispose?.(); } catch { /* disposal is best-effort */ }
     };
   }, 'dsh-lark-session-monitor-plugin: runtime lifecycle');
 }

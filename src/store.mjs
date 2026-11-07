@@ -343,17 +343,32 @@ export class MonitorStore {
     });
   }
 
-  /** Advance one monitor's polling cursor; ignored if the monitor is gone. */
-  advanceCursor(monitorId, cursor) {
+  /**
+   * Advance one monitor's polling cursor; ignored if the monitor is gone.
+   *
+   * The high-water mark never moves backwards on its own — a failed poll must
+   * re-read the same messages, not skip them. An explicit reset passes
+   * `force`, the one sanctioned way to move the mark back and re-read
+   * history.
+   */
+  advanceCursor(monitorId, cursor, { force = false } = {}) {
     return this.#write((draft) => {
       const index = draft.monitors.findIndex((m) => m.monitorId === monitorId);
       if (index < 0) return undefined;
+      if (force) {
+        // A reset replaces the cursor wholesale: the mark goes where the
+        // caller said, and a blank id means "every message from the mark on",
+        // so the stale id must not survive the way a spread would keep it.
+        const next = cursorFrom(cursor);
+        if (typeof cursor?.lastMessageId === 'string') next.lastMessageId = cursor.lastMessageId;
+        draft.monitors[index].cursor = next;
+        return cloneJson(next);
+      }
       const current = draft.monitors[index].cursor ?? {};
       const next = cursorFrom(cursor);
       draft.monitors[index].cursor = {
         ...current,
         ...next,
-        // Never move the high-water mark backwards.
         lastCreateTimeMs: Math.max(
           current.lastCreateTimeMs ?? 0,
           next.lastCreateTimeMs ?? 0,

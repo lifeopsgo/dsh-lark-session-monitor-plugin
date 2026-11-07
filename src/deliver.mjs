@@ -1,10 +1,12 @@
 /**
  * Deliver one batch of messages into a DeepSeek Harness session.
  *
- * A session the Host does not recognize yet cannot receive a prompt: the
- * session controller resolves ownership from the workspace registry first, so
- * delivery is adopt-then-prompt. Adoption is cached per monitor because it is
- * three RPCs, and a monitor polls on a 30-second cadence.
+ * Delivery resolves the configured session from the workspace registry and
+ * then prompts it directly: `session.prompt` itself resumes a dormant session
+ * and queues into a live one. No `session.create` is involved — the Host's
+ * create claims a requested id only while the session is still blank, and
+ * mints a fresh session with a new id once any turn has run, so delivering
+ * through create lands the message in a session the user never chose.
  *
  * The prompt is submitted with `mode: 'queue'`, matching how the IM channels
  * deliver: a monitor must never interrupt a turn that is already running in
@@ -16,7 +18,6 @@
 import { composePrompt } from './normalize.mjs';
 import { isArchivedSession, isKnownSession } from './inventory.mjs';
 
-const ADOPT_TTL_MS = 5 * 60_000;
 const PROMPT_TIMEOUT_MS = 30_000;
 const PROMPT_RPC_TIMEOUT_MS = 600_000;
 
@@ -49,11 +50,17 @@ function unwrapRemote(value) {
 export class HarnessGateway {
   #gateway;
   #requestIdPrefix;
+  #peer;
 
-  constructor({ gateway, requestIdPrefix = 'lark-monitor' }) {
+  constructor({ gateway, peer, requestIdPrefix = 'lark-monitor' }) {
     if (!gateway || typeof gateway.invoke !== 'function') {
       throw new TypeError('Host Typert gateway is required');
     }
+    // Every gateway call names the Peer it speaks for. The Host reads
+    // `peer.signal` before it touches the method, so a call without one dies
+    // with "Cannot read properties of undefined (reading 'signal')" — the
+    // error this class used to produce on the first delivery of each batch.
+    this.#peer = peer;
     this.#gateway = gateway;
     this.#requestIdPrefix = requestIdPrefix;
   }
@@ -63,6 +70,7 @@ export class HarnessGateway {
       namespace,
       method,
       args,
+      ...(this.#peer === undefined ? {} : { peer: this.#peer }),
       ...(signal === undefined ? {} : { signal }),
     });
     return unwrapRemote(value);
@@ -83,6 +91,7 @@ export class HarnessGateway {
         namespace,
         method,
         args,
+        ...(this.#peer === undefined ? {} : { peer: this.#peer }),
         signal: streamSignal,
       });
       iterator = source[Symbol.asyncIterator]();
@@ -131,13 +140,12 @@ export class HarnessGateway {
   }
 }
 
-/** Resolve which workspace declares a session id, matching the Host's rule. */
 /**
  * Resolve which workspace declares a session id.
  *
  * Uses the shared inventory predicate so this agrees with the picker: two
  * different notions of "which workspace owns this session" is how a target
- * that looks selectable ends up failing to adopt.
+ * that looks selectable ends up failing to resolve.
  */
 function workspaceForSession(sessionId, workspaces) {
   const owners = isKnownSession(workspaces, sessionId);
@@ -155,7 +163,7 @@ function workspaceForSession(sessionId, workspaces) {
 }
 
 /**
- * Owns adopt caching and prompt delivery for the monitor runtime.
+ * Owns target resolution and prompt delivery for the monitor runtime.
  *
  * Auto-create is deliberately narrow: it only replaces a session the Host
  * says no longer exists, and it is rate-limited per monitor so a broken
@@ -165,7 +173,6 @@ export class SessionDeliverer {
   #harness;
   #store;
   #logger;
-  #adoptions = new Map();
   #autoCreatedAt = new Map();
   #now;
   #autoCreateCooldownMs;
@@ -198,28 +205,21 @@ export class SessionDeliverer {
     this.#readInventory = readInventory;
   }
 
-  #cachedAdoption(monitorId) {
-    const entry = this.#adoptions.get(monitorId);
-    if (!entry) return undefined;
-    if (this.#now() - entry.at > ADOPT_TTL_MS) {
-      this.#adoptions.delete(monitorId);
-      return undefined;
-    }
-    return entry.sessionId;
-  }
-
   /**
-   * Ensure the monitor's session is registered before prompting it.
+   * Prove the monitor's session is registered, then hand its id back for the
+   * prompt. The prompt method itself resumes a dormant session and queues
+   * into a live one, so nothing else is needed here.
    *
-   * Existence is checked first. Without that check a deleted session would be
-   * "adopted" by handing its id back to `session.create`, which either
-   * recreates a session under an id the user never chose or fails opaquely —
-   * so the missing case is raised here as `session-summary-unavailable`, the
-   * one condition the caller is allowed to recover from.
+   * A `session.create` call must never be made for a configured target: the
+   * Host's create claims the requested id only while the session is still
+   * blank, and mints a fresh session once any turn has run — delivering
+   * through create is how messages landed in sessions the user never chose.
+   *
+   * Existence is checked because a deleted session should surface here as
+   * `session-summary-unavailable`, the one condition the caller is allowed
+   * to recover from, instead of as an opaque prompt failure.
    */
-  async #adopt(monitor, signal) {
-    const cached = this.#cachedAdoption(monitor.monitorId);
-    if (cached && cached === monitor.sessionId) return cached;
+  async #requireSession(monitor, signal) {
 
     // A session counts as existing when a workspace declares it, not when it
     // is currently open: the live store holds only the handful of active
@@ -243,14 +243,11 @@ export class SessionDeliverer {
       error.code = 'session-not-registered';
       throw error;
     }
-    const workspace = workspaceForSession(monitor.sessionId, workspaces);
-    const adopted = await this.#harness.createSession({
-      workspaceId: workspace.workspaceId ?? workspace.id,
-      sessionId: monitor.sessionId,
-    }, signal);
-    const sessionId = adopted?.sessionId ?? monitor.sessionId;
-    this.#adoptions.set(monitor.monitorId, { sessionId, at: this.#now() });
-    return sessionId;
+    // Ambiguous ownership is refused even though the prompt only needs the
+    // id: the same target must not be silently accepted here while the picker
+    // refuses to offer it.
+    workspaceForSession(monitor.sessionId, workspaces);
+    return monitor.sessionId;
   }
 
   /** Replace a session the Host reports as gone, at most once per cooldown. */
@@ -283,7 +280,6 @@ export class SessionDeliverer {
       error.code = 'session-create-failed';
       throw error;
     }
-    this.#adoptions.set(monitor.monitorId, { sessionId, at: this.#now() });
     await this.#store.setMonitorSession(monitor.monitorId, { sessionId, sessionTitle: '' });
     this.#logger.warn?.(
       `[lark-session-monitor] monitor ${monitor.monitorId} auto-created session ${sessionId}`,
@@ -292,7 +288,7 @@ export class SessionDeliverer {
   }
 
   /**
-   * Whether a failed adoption means "the session is gone" rather than "the
+   * Whether a failed resolution means "the session is gone" rather than "the
    * configuration is wrong".
    *
    * Only a deleted session is recoverable by creating a new one. A session
@@ -339,7 +335,7 @@ export class SessionDeliverer {
       }
     } else {
       try {
-        sessionId = await this.#adopt(monitor, signal);
+        sessionId = await this.#requireSession(monitor, signal);
       } catch (error) {
         if (!this.#isMissingSession(error)) throw error;
         sessionId = await this.#recreate(monitor, signal);
@@ -375,15 +371,14 @@ export class SessionDeliverer {
     return sessionId;
   }
 
-  /** Drop cached adoption so the next delivery re-resolves ownership. */
+  /** Drop the auto-create cooldown so a reset can immediately recreate. */
   forget(monitorId) {
-    this.#adoptions.delete(monitorId);
+    this.#autoCreatedAt.delete(monitorId);
   }
 
   clear() {
-    this.#adoptions.clear();
     this.#autoCreatedAt.clear();
   }
 }
 
-export { PROMPT_TIMEOUT_MS, PROMPT_RPC_TIMEOUT_MS, ADOPT_TTL_MS };
+export { PROMPT_TIMEOUT_MS, PROMPT_RPC_TIMEOUT_MS };

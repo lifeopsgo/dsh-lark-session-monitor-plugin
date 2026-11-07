@@ -1,6 +1,6 @@
 {
   "name": "dsh-lark-session-monitor-plugin",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "DSH plugin that watches Feishu (Lark) conversations with your own user identity and forwards new messages into a DeepSeek Harness session.",
   "keywords": [
     "deepseek-harness",

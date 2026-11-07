@@ -2,8 +2,8 @@
  * Unit tests for session delivery.
  *
  * Delivery is where a monitor meets the Host, so these tests pin the parts
- * that silently corrupt behavior when wrong: adopting before prompting,
- * queue-mode delivery, and the narrow auto-create rule.
+ * that silently corrupt behavior when wrong: resolving the target before
+ * prompting, queue-mode delivery, and the narrow auto-create rule.
  */
 
 import assert from 'node:assert/strict';
@@ -96,19 +96,23 @@ function delivererFor(gateway, store = fakeStore(), { archivedSessionIds = [] } 
   };
 }
 
-test('delivery adopts the session before prompting it', async () => {
+test('delivery prompts the configured session without creating one', async () => {
+  // The Host's session.create claims a requested id only while the session is
+  // still blank; once any turn has run it mints a fresh session instead.
+  // Delivering through create is how messages landed in sessions the user
+  // never chose, so a configured target must never involve create.
   const gateway = fakeGateway({
     workspaces: [workspaceItem('/w', ['s_1'])],
     sessions: [{ sessionId: 's_1' }],
     createResult: { sessionId: 's_1' },
   });
   const { deliverer } = delivererFor(gateway);
-  await deliverer.deliver(monitor(), ['正文']);
-  const methods = gateway.calls.map((c) => `${c.namespace}.${c.method}`);
-  assert.ok(methods.includes('session.create'));
-  const promptIndex = methods.lastIndexOf('session.prompt');
-  const adoptIndex = methods.lastIndexOf('session.create');
-  assert.ok(adoptIndex < promptIndex, 'adopt must precede prompt');
+  const result = await deliverer.deliver(monitor(), ['正文']);
+  assert.equal(result.sessionId, 's_1');
+  assert.equal(gateway.calls.filter((c) => c.method === 'create').length, 0);
+  const prompt = gateway.calls.find((c) => c.method === 'prompt');
+  assert.ok(prompt, 'the delivery must prompt');
+  assert.equal(prompt.args.request.sessionId, 's_1');
 });
 
 test('the prompt is submitted in queue mode with a text block', async () => {
@@ -125,7 +129,7 @@ test('the prompt is submitted in queue mode with a text block', async () => {
   assert.equal(promptCall.args.request.sessionId, 's_1');
 });
 
-test('adoption is cached across deliveries', async () => {
+test('two deliveries prompt twice and never create', async () => {
   const gateway = fakeGateway({
     workspaces: [workspaceItem('/w', ['s_1'])],
     sessions: [{ sessionId: 's_1' }],
@@ -134,8 +138,8 @@ test('adoption is cached across deliveries', async () => {
   const { deliverer } = delivererFor(gateway);
   await deliverer.deliver(monitor(), ['a']);
   await deliverer.deliver(monitor(), ['b']);
-  const adoptions = gateway.calls.filter((c) => c.method === 'create').length;
-  assert.equal(adoptions, 1);
+  assert.equal(gateway.calls.filter((c) => c.method === 'create').length, 0);
+  assert.equal(gateway.calls.filter((c) => c.method === 'prompt').length, 2);
 });
 
 test('a session owned by no workspace is refused with a typed code', async () => {
@@ -209,11 +213,25 @@ test('auto-create is throttled so a broken config cannot spawn sessions', async 
   });
   const { deliverer } = delivererFor(gateway, fakeStore(), { archivedSessionIds: ['s_1'] });
   await deliverer.deliver(monitor(), ['a']);
-  deliverer.forget(monitor().monitorId);
+  // No forget() between the deliveries: the cooldown alone must stop a
+  // second recreate from a broken configuration.
   await assert.rejects(
     () => deliverer.deliver(monitor(), ['b']),
     (error) => error.code === 'session-recreate-throttled',
   );
+});
+
+test('forget clears the auto-create cooldown so a reset can recreate at once', async () => {
+  const gateway = fakeGateway({
+    workspaces: [workspaceItem('/w', [])],
+    sessions: [],
+    createResult: { sessionId: 's_new' },
+  });
+  const { deliverer } = delivererFor(gateway, fakeStore(), { archivedSessionIds: ['s_1'] });
+  await deliverer.deliver(monitor(), ['a']);
+  deliverer.forget(monitor().monitorId);
+  const second = await deliverer.deliver(monitor(), ['b']);
+  assert.equal(second.sessionId, 's_new');
 });
 
 test('auto-create without a workspace is refused rather than guessed', async () => {

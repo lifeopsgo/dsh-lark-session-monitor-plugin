@@ -90,6 +90,21 @@ test('advanceCursor never moves the high-water mark backwards', async () => {
   assert.equal(store.monitor(created.monitorId).cursor.lastCreateTimeMs, 5_000);
 });
 
+test('an explicit reset moves the cursor backwards to re-read history', async () => {
+  // monitor.reset promises "the next poll re-reads recent history", which is
+  // only possible when the reset path may move the mark back.
+  const { store } = await openStore();
+  const created = await store.upsertMonitor({ chatId: 'oc_a', prompt: 'p' });
+  await store.advanceCursor(created.monitorId, { lastCreateTimeMs: 9_000, lastMessageId: 'om_9' });
+  const cursor = await store.advanceCursor(
+    created.monitorId,
+    { lastCreateTimeMs: 2_000, lastMessageId: '' },
+    { force: true },
+  );
+  assert.equal(cursor.lastCreateTimeMs, 2_000);
+  assert.equal(cursor.lastMessageId, '');
+});
+
 test('concurrent writes are serialized so no edit is lost', async () => {
   const { store } = await openStore();
   await Promise.all([
