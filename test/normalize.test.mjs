@@ -16,7 +16,7 @@ import {
   distinctSenders,
   isAppSender,
   isFromSenders,
-  isOwnMessage,
+  isOwnBotMessage,
   mentionsId,
   renderMessage,
   senderLabel,
@@ -178,30 +178,34 @@ test('composePrompt puts the instruction before the message', () => {
   assert.equal(composePrompt('归档', ''), '归档');
 });
 
-test('isOwnMessage matches the sender against the signed-in identity', () => {
-  const identity = { openId: 'ou_me', unionId: 'on_me', userId: '', name: '我' };
-  const own = message('text', { text: 'hi' }, {
-    sender: { sender_type: 'user', sender_id: { open_id: 'ou_me' } },
+test('isOwnBotMessage matches app senders by App ID, never a person', () => {
+  // How the message read API reports the bot's own card: sender.id is the App ID.
+  const bot = message('text', { text: 'hi' }, {
+    sender: { sender_type: 'app', id: 'cli_self', id_type: 'app_id' },
   });
-  assert.equal(isOwnMessage(own, identity), true);
+  assert.equal(isOwnBotMessage(bot, 'cli_self'), true);
+  assert.equal(isOwnBotMessage(bot, 'cli_other'), false);
 
-  const ownByUnionId = message('text', { text: 'hi' }, {
-    sender: { sender_type: 'user', sender_id: { union_id: 'on_me' } },
+  // Another app in the same chat is not this monitor's own output.
+  const otherApp = message('text', { text: 'hi' }, {
+    sender: { sender_type: 'app', id: 'cli_other', id_type: 'app_id' },
   });
-  assert.equal(isOwnMessage(ownByUnionId, identity), true);
+  assert.equal(isOwnBotMessage(otherApp, 'cli_self'), false);
 
-  const someoneElse = message('text', { text: 'hi' }, {
-    sender: { sender_type: 'user', sender_id: { open_id: 'ou_someone_else' } },
+  // A person is never the bot, whatever ids the read carries.
+  const person = message('text', { text: 'hi' }, {
+    sender: { sender_type: 'user', id: 'ou_me', sender_id: { open_id: 'ou_me' } },
   });
-  assert.equal(isOwnMessage(someoneElse, identity), false);
+  assert.equal(isOwnBotMessage(person, 'cli_self'), false);
 });
 
-test('isOwnMessage fails open when no identity is known', () => {
-  const own = message('text', { text: 'hi' }, {
-    sender: { sender_type: 'user', sender_id: { open_id: 'ou_me' } },
+test('isOwnBotMessage fails open when the App ID is unknown', () => {
+  const bot = message('text', { text: 'hi' }, {
+    sender: { sender_type: 'app', id: 'cli_self', id_type: 'app_id' },
   });
-  assert.equal(isOwnMessage(own, undefined), false);
-  assert.equal(isOwnMessage(own, { openId: '', unionId: '', userId: '', name: '' }), false);
+  // An unset App ID cannot identify the bot, so nothing is filtered away.
+  assert.equal(isOwnBotMessage(bot, ''), false);
+  assert.equal(isOwnBotMessage(bot, undefined), false);
 });
 
 test('isFromSenders matches any sender id against the whitelist', () => {
@@ -216,6 +220,33 @@ test('isFromSenders matches any sender id against the whitelist', () => {
   assert.equal(isFromSenders(legacyShape, ['ou_c']), true);
   const appSender = { sender: { sender_type: 'app', id: 'cli_bot' } };
   assert.equal(isFromSenders(appSender, ['cli_bot']), true);
+});
+
+test('mentionsId accepts both mention spellings the platform hands back', () => {
+  // Message reads: a bare open_id plus id_type.
+  const read = message('text', { text: '@_user_1 查一下' }, {
+    mentions: [{ key: '@_user_1', id: 'ou_bot', id_type: 'open_id' }],
+  });
+  assert.equal(mentionsId(read, 'ou_bot'), true);
+  assert.equal(mentionsId(read, 'ou_other'), false);
+
+  // Event payloads: the same mention with an id object.
+  const event = message('text', { text: '@_user_1 查一下' }, {
+    mentions: [{ key: '@_user_1', id: { open_id: 'ou_bot', union_id: 'on_bot', user_id: 'u_bot' } }],
+  });
+  assert.equal(mentionsId(event, 'ou_bot'), true);
+  assert.equal(mentionsId(event, 'on_bot'), true);
+  assert.equal(mentionsId(event, 'ou_other'), false);
+});
+
+test('renderMessage resolves @_user_N placeholders to the mentioned names', () => {
+  const raw = message('text', { text: '@_user_1 查一下 L1NSPGHB6SB004123' }, {
+    mentions: [{ key: '@_user_1', id: 'ou_bot', id_type: 'open_id', name: '巡检机器人' }],
+  });
+  // A prompt reading `@_user_1` names nobody; the session needs the name.
+  assert.equal(renderMessage(raw).text, '@巡检机器人 查一下 L1NSPGHB6SB004123');
+  // An unresolved key stays as it is rather than disappearing.
+  assert.equal(renderMessage(message('text', { text: '@_user_9 你好' })).text, '@_user_9 你好');
 });
 
 test('mentionsId recognizes bot mentions in the mentions array and post at-nodes', () => {

@@ -298,6 +298,21 @@ function formatTime(ms) {
   return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
+/**
+ * Why the runtime skipped a message, in the words of the settings page.
+ *
+ * The reason codes come from the Host; an unknown code is shown verbatim so a
+ * newer Host degrades to a readable label instead of breaking the card.
+ */
+const SKIP_REASON_LABELS = Object.freeze({
+  bot: '本应用机器人发送',
+  sender: '发送者不在来源名单',
+  mention: '未 @机器人 或你本人',
+  allowlist: '未命中关键词白名单',
+  blocked: '命中关键词黑名单',
+  empty: '消息无可读内容',
+});
+
 const EMPTY_DRAFT = Object.freeze({
   monitorId: '',
   name: '',
@@ -308,11 +323,12 @@ const EMPTY_DRAFT = Object.freeze({
   sessionId: '',
   sessionTitle: '',
   autoCreateAndPin: false,
-  skipOwnMessages: false,
+  skipBotMessages: false,
   onlySenderIds: [],
   blockedKeywords: [],
   allowedKeywords: [],
   alsoBotMention: false,
+  alsoOperatorMention: false,
   enabled: true,
 });
 
@@ -480,11 +496,18 @@ function MonitorEditor({
         onChange: (e) => update({ alsoBotMention: e.target.checked }),
       }),
       h('span', { className: 'lsm-hint' },
-        '也接收 @机器人 的消息（@本应用机器人的消息不受发送者名单限制；名单留空时即只收 @机器人 的消息）')),
+        '也接收 @机器人 的消息（@本应用机器人的消息不受发送者名单与关键词黑白名单限制，一律投递；名单留空时即只收 @机器人 的消息）')),
+    h('label', { className: 'lsm-inline' },
+      h('input', {
+        type: 'checkbox', checked: draft.alsoOperatorMention === true,
+        onChange: (e) => update({ alsoOperatorMention: e.target.checked }),
+      }),
+      h('span', { className: 'lsm-hint' },
+        '也接收 @我 的消息（别人 @ 你本人时同样直接投递，让机器人替你答复；规则与 @机器人 相同）')),
     // Keyword blacklist: one keyword per line — a line may contain commas,
     // so the textarea, not a comma-split input, is the lossless encoding.
     h('div', { className: 'lsm-field' },
-      h('span', { className: 'lsm-label' }, '关键词黑名单（每行一个，命中任一即不投递该消息；留空 = 不屏蔽）'),
+      h('span', { className: 'lsm-label' }, '关键词黑名单（每行一个，命中任一即不投递该消息；留空 = 不屏蔽；只作用于轮询到的非 @机器人 消息）'),
       h('textarea', {
         rows: 2,
         value: (draft.blockedKeywords ?? []).join('\n'),
@@ -495,7 +518,7 @@ function MonitorEditor({
         }),
       })),
     h('div', { className: 'lsm-field' },
-      h('span', { className: 'lsm-label' }, '关键词白名单（每行一个，命中任一才投递该消息；留空 = 不限制）'),
+      h('span', { className: 'lsm-label' }, '关键词白名单（每行一个，命中任一才投递该消息；留空 = 不限制；只作用于轮询到的非 @机器人 消息）'),
       h('textarea', {
         rows: 2,
         value: (draft.allowedKeywords ?? []).join('\n'),
@@ -519,10 +542,11 @@ function MonitorEditor({
             '自动创建并固定绑定（勾选：首次自动创建后固定使用该会话；不勾选：每条消息都新建一个会话）')),
     h('label', { className: 'lsm-inline' },
       h('input', {
-        type: 'checkbox', checked: draft.skipOwnMessages === true,
-        onChange: (e) => update({ skipOwnMessages: e.target.checked }),
+        type: 'checkbox', checked: draft.skipBotMessages === true,
+        onChange: (e) => update({ skipBotMessages: e.target.checked }),
       }),
-      h('span', { className: 'lsm-hint' }, '过滤自己发送的消息（不投递你本人发送的消息）')),
+      h('span', { className: 'lsm-hint' },
+        '过滤机器人自己发送的消息（不投递本应用机器人发出的消息，避免它的回复再被当成新消息；任何人 @机器人 的消息都照常投递）')),
     h('label', { className: 'lsm-inline' },
       h('input', {
         type: 'checkbox', checked: draft.enabled,
@@ -574,7 +598,10 @@ function AuthCard({ settings, authorization, onBegin, onComplete, onSignOut, bus
       h(Badge, { tone: 'ok' }, 'user token 有效'),
       h('div', { className: 'lsm-meta' },
         h('span', null, `到期时间：${formatTime(authorization.expiresAt)}`),
-        authorization.needsRefresh ? h('span', null, '（将在下次调用前自动刷新）') : null),
+        authorization.needsRefresh ? h('span', null, '（将在下次调用前自动刷新）') : null,
+        settings.app.userOpenId
+          ? h('span', { title: settings.app.userOpenId }, `本人 open_id：${settings.app.userOpenId}`)
+          : h('span', null, '本人 open_id：尚未读取')),
       h('div', { className: 'lsm-spacer' }),
       h('button', {
         className: 'lsm-btn lsm-btn-danger', disabled: busy, onClick: onSignOut,
@@ -936,20 +963,35 @@ export function LarkMonitorPage({ rpcCall }) {
                 ? h('span', { title: monitor.sessionId },
                     `目标：${monitor.sessionTitle || sessionTitles.get(monitor.sessionId) || monitor.sessionId}`)
                 : (monitor.autoCreateAndPin ? '目标：自动创建并固定绑定（尚未创建）' : '目标：每条消息新建')),
-            monitor.skipOwnMessages ? h('span', null, '过滤自己消息') : null,
+            monitor.skipBotMessages ? h('span', null, '过滤机器人自己的消息') : null,
             (monitor.blockedKeywords?.length ?? 0) > 0
               ? h('span', null, `屏蔽词×${monitor.blockedKeywords.length}`) : null,
             (monitor.allowedKeywords?.length ?? 0) > 0
               ? h('span', null, `白名单词×${monitor.allowedKeywords.length}`) : null,
-            monitor.alsoBotMention || (monitor.onlySenderIds?.length ?? 0) > 0
+            monitor.alsoBotMention || monitor.alsoOperatorMention || (monitor.onlySenderIds?.length ?? 0) > 0
               ? h('span', null, [
                   (monitor.onlySenderIds?.length ?? 0) > 0
                     ? `指定发送者×${monitor.onlySenderIds.length}` : '',
                   monitor.alsoBotMention ? '@机器人' : '',
+                  monitor.alsoOperatorMention ? '@我' : '',
                 ].filter(Boolean).map((part, index) => (index === 0 ? `来源：${part}` : ` 或 ${part}`)).join(''))
               : null,
             h('span', null, `已投递 ${status.delivered ?? 0} 条`),
+            // A monitor that reads but never delivers must say so: without
+            // this line the only evidence of a filtered @bot test is a cursor
+            // that moved and a session that stayed quiet.
+            (status.skipped ?? 0) > 0 ? h('span', null, `已跳过 ${status.skipped} 条`) : null,
             h('span', null, `最后轮询：${formatTime(status.lastPollAt)}`)),
+          monitor.alsoOperatorMention && status.operatorKnown === false
+            ? h('div', { className: 'lsm-notice' },
+                '还没有读到你的飞书身份，@我 的规则暂不生效。请在下面重新授权一次，或稍等下一轮轮询。')
+            : null,
+          status.lastSkip
+            ? h('div', { className: 'lsm-meta' },
+                h('span', { className: 'lsm-hint', title: status.lastSkip.messageId || '' },
+                  `最近跳过：${SKIP_REASON_LABELS[status.lastSkip.reason] || status.lastSkip.reason}`
+                  + ` · ${status.lastSkip.sender} · ${formatTime(status.lastSkip.at)}`))
+            : null,
           h('div', { className: 'lsm-meta' },
             h('span', null, `Prompt：${monitor.prompt.slice(0, 60)}${monitor.prompt.length > 60 ? '…' : ''}`)),
           status.lastError ? h('div', { className: 'lsm-notice lsm-notice-err' }, status.lastError) : null,

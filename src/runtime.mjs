@@ -17,7 +17,7 @@
  * @module dsh-lark-session-monitor-plugin/runtime
  */
 
-import { isAppSender, isFromSenders, isOwnMessage, matchesBlockedKeywords, mentionsId, renderMessage, senderLabel } from './normalize.mjs';
+import { isAppSender, isFromSenders, isOwnBotMessage, matchesBlockedKeywords, mentionsId, renderMessage, senderLabel } from './normalize.mjs';
 import { MIN_POLL_INTERVAL_MS } from './store.mjs';
 
 /** Messages delivered in one prompt; the remainder waits for the next round. */
@@ -69,13 +69,16 @@ export class MonitorRuntime {
   #pending = new Map();
   #state = new Map();
   #controller = new AbortController();
-  /** The signed-in user's identity, fetched once for own-message filtering. */
-  #identityCache;
   /** The app bot's open_id, fetched once for the @机器人 filter. */
   #botIdCache;
   #getBotOpenId;
+  #getAppId;
+  /** The authorized user's open_id, resolved at most once per process. */
+  #operatorIdCache;
 
-  constructor({ store, deliverer, getClient, getIntervalMs, logger = console, now = Date.now, getBotOpenId }) {
+  constructor({
+    store, deliverer, getClient, getIntervalMs, logger = console, now = Date.now, getBotOpenId, getAppId,
+  }) {
     this.#store = store;
     this.#deliverer = deliverer;
     this.#getClient = getClient;
@@ -83,11 +86,15 @@ export class MonitorRuntime {
     this.#logger = logger;
     this.#now = now;
     this.#getBotOpenId = getBotOpenId;
+    this.#getAppId = getAppId;
   }
 
   /** Per-monitor status for the settings page. */
   status() {
     const settings = this.#store.snapshot();
+    // Whether the @我 rule can match yet: the identity lives in settings once
+    // it has been read, so a restart keeps it.
+    const operatorKnown = Boolean(this.#operatorIdCache || settings?.app?.userOpenId);
     return settings.monitors.map((monitor) => {
       const state = this.#state.get(monitor.monitorId) ?? {};
       return {
@@ -97,6 +104,12 @@ export class MonitorRuntime {
         delivered: state.delivered ?? 0,
         pending: (this.#pending.get(monitor.monitorId) ?? []).length,
         lastError: state.lastError ?? null,
+        operatorKnown,
+        // What the filters rejected most recently, and in total. A monitor
+        // that reads but never delivers is otherwise indistinguishable from
+        // one that never polled.
+        skipped: state.skipped ?? 0,
+        lastSkip: state.lastSkip ?? null,
       };
     });
   }
@@ -136,31 +149,38 @@ export class MonitorRuntime {
   }
 
   /**
-   * Resolve the signed-in user's identity once, for own-message filtering.
+   * The authorized user's open_id, for the @我 filter.
    *
-   * A failure is cached as "no identity" and logged once: re-fetching every
-   * poll would hammer a dying endpoint, and surfacing it as a monitor error
-   * would turn a decoration fetch into a delivery outage. The safe reading
-   * of "cannot tell who sent this" is to deliver it as before.
+   * Persisted in settings, so a restart does not need the call again. The
+   * answer is only asked for when a monitor turns the rule on, and a failure
+   * is cached like a success: re-fetching every poll would hammer a dying
+   * endpoint, and the rule simply does not match until the identity resolves.
+   * The monitor card says so rather than leaving the switch looking broken.
    */
-  async #identity(client, signal) {
-    if (this.#identityCache) return this.#identityCache.identity;
+  async #operatorId(client, signal) {
+    if (this.#operatorIdCache !== undefined) return this.#operatorIdCache;
+    const stored = this.#store.snapshot()?.app?.userOpenId;
+    if (typeof stored === 'string' && stored) {
+      this.#operatorIdCache = stored;
+      return stored;
+    }
     try {
       const identity = await client.userInfo({ signal });
-      this.#identityCache = { identity };
+      const openId = typeof identity?.openId === 'string' ? identity.openId : '';
+      this.#operatorIdCache = openId;
+      if (openId) await this.#store.saveUserOpenId(openId);
+      return openId;
     } catch (error) {
       // An aborted poll is not a failed fetch: try again on the next round.
-      if (error?.name === 'AbortError') return undefined;
-      this.#identityCache = { identity: undefined };
+      if (error?.name === 'AbortError') return '';
+      this.#operatorIdCache = '';
       this.#logger.warn?.(
-        '[lark-session-monitor] could not load your Feishu identity; own messages cannot be filtered: '
+        '[lark-session-monitor] 无法读取你的飞书身份，@我 的规则暂不生效：'
         + `${error instanceof Error ? error.message : String(error)}`,
-        // The error object rides along: the Host log keeps the stack, which a
-        // message-only line loses forever.
         error,
       );
+      return '';
     }
-    return this.#identityCache.identity;
   }
 
   /**
@@ -244,23 +264,43 @@ export class MonitorRuntime {
       const fresh = this.#selectFresh(latest, messages);
       if (fresh.length === 0) return;
 
-      // The cursor still covers the whole `fresh` page (see #enqueue), so
-      // skipped own messages are never re-read; only the delivery shrinks.
+      // Every message is classified by the rule that decided it, so a round
+      // that delivers nothing can still say why. Without that, the monitor
+      // consumes the page and reports no error — indistinguishable from a
+      // quiet chat. A manual @bot test disappeared exactly this way: read,
+      // filtered, cursor advanced, nothing said.
+      const skipped = [];
+      const skip = (message, reason) => { skipped.push({ message, reason }); };
+
+      // The bot's own replies are not input: its cards land in the same chat
+      // this monitor reads, and delivering them back would feed the session
+      // its own output. Only this app's messages are skipped — a person's
+      // message is delivered like anyone else's, whoever typed it. Nothing
+      // else is fetched to decide this: the sender already carries the App ID.
+      // The cursor still covers the whole `fresh` page (see #enqueue), so a
+      // skipped message is never re-read; only the delivery shrinks.
       let deliverable = fresh;
-      if (latest.skipOwnMessages === true) {
-        const identity = await this.#identity(client, signal);
-        if (identity) deliverable = fresh.filter((m) => !isOwnMessage(m, identity));
+      if (latest.skipBotMessages === true) {
+        const appId = typeof this.#getAppId === 'function' ? this.#getAppId() : '';
+        deliverable = [];
+        for (const message of fresh) {
+          if (isOwnBotMessage(message, appId)) skip(message, 'bot');
+          else deliverable.push(message);
+        }
       }
-      // Source acceptance. The sender list narrows the stream; the @机器人
-      // switch widens it back by exactly one case: a message that names the
-      // bot is accepted even when its sender is not on the list — being
-      // addressed is the signal, not who typed it. An empty list plus the
-      // switch therefore means "only @bot messages"; with both off, every
-      // message is delivered as before. skipOwnMessages stays outermost, so
-      // the user's own test pings never ride the mention path back in.
+      // Source acceptance. The sender list narrows the stream; two switches
+      // widen it back, each by exactly one case. A message that names the bot
+      // is accepted even when its sender is not on the list. A message that
+      // names the operator is accepted the same way: someone asking a person
+      // a question is asking the person, and this monitor answers as them.
+      // Being addressed is the signal, not who typed it. Anyone may be the
+      // one addressing — only the bot's own messages are filtered, and the
+      // bot never mentions itself or its operator.
       const senderIds = Array.isArray(latest.onlySenderIds) ? latest.onlySenderIds : [];
       const wantSenders = senderIds.length > 0;
       const wantMention = latest.alsoBotMention === true;
+      const wantOperator = latest.alsoOperatorMention === true;
+      const wantAnyMention = wantMention || wantOperator;
       let botOpenId;
       if (wantMention) {
         botOpenId = await this.#botId(signal);
@@ -271,31 +311,62 @@ export class MonitorRuntime {
           throw new Error('无法识别本应用的机器人身份：请确认应用已启用机器人能力，且 App ID 与 App Secret 有效。');
         }
       }
-      if (wantSenders || wantMention) {
-        deliverable = deliverable.filter((message) =>
-          (wantSenders && isFromSenders(message, senderIds))
-          || (wantMention && mentionsId(message, botOpenId)));
+      // A missing operator id leaves only the @bot rule working; the monitor
+      // card reports that, so the switch never looks silently broken.
+      const operatorOpenId = wantOperator ? await this.#operatorId(client, signal) : '';
+      // `byMention` records the acceptance path, because the keyword rules
+      // below treat an addressed message differently from polled traffic.
+      const admitted = [];
+      for (const message of deliverable) {
+        const byMention = (wantMention && mentionsId(message, botOpenId))
+          || (wantOperator && Boolean(operatorOpenId) && mentionsId(message, operatorOpenId));
+        const bySender = wantSenders && isFromSenders(message, senderIds);
+        if (byMention || bySender || (!wantSenders && !wantAnyMention)) {
+          admitted.push({ message, byMention });
+        } else {
+          skip(message, wantSenders ? 'sender' : 'mention');
+        }
       }
 
       // Keyword filters, both checked on the rendered text: a card whose
-      // content mentions a keyword is treated exactly like plain text. The
-      // allowlist admits (an empty list admits all); the blacklist then
-      // suppresses, so a message named by both is dropped. Filtered
-      // messages are consumed, not retried — the cursor advances past them
-      // with the rest of `fresh`.
+      // content mentions a keyword is treated exactly like plain text.
+      //
+      // Neither list applies to a message that names the bot or the
+      // operator. Both are rules for traffic the monitor overhears while
+      // polling; a message that addresses one of them is a request, and the
+      // person typing it has already decided it matters. The blacklist
+      // therefore only trims the polled stream, not the direct asks.
+      // Filtered messages are consumed, not retried — the cursor advances
+      // past them with the rest of `fresh`.
       const allowed = Array.isArray(latest.allowedKeywords) ? latest.allowedKeywords : [];
       const blocked = Array.isArray(latest.blockedKeywords) ? latest.blockedKeywords : [];
-      const text = deliverable
-        .map((message) => this.#format(latest, message))
-        .filter((body) => typeof body === 'string' && body)
-        .filter((body) => (allowed.length === 0 || matchesBlockedKeywords(body, allowed)))
-        .filter((body) => !matchesBlockedKeywords(body, blocked));
-      if (text.length === 0) {
-        // Nothing renderable, but the cursor must still move past them.
+      const entries = [];
+      for (const entry of admitted) {
+        const body = this.#format(latest, entry.message);
+        if (!body) {
+          skip(entry.message, 'empty');
+          continue;
+        }
+        if (!entry.byMention) {
+          if (matchesBlockedKeywords(body, blocked)) {
+            skip(entry.message, 'blocked');
+            continue;
+          }
+          if (allowed.length > 0 && !matchesBlockedKeywords(body, allowed)) {
+            skip(entry.message, 'allowlist');
+            continue;
+          }
+        }
+        entries.push(body);
+      }
+      if (skipped.length > 0) this.#recordSkips(latest.monitorId, skipped, fresh.length);
+
+      if (entries.length === 0) {
+        // Nothing deliverable, but the cursor must still move past them.
         await this.#advance(latest, fresh[fresh.length - 1]);
         return;
       }
-      await this.#enqueue(latest, text, fresh);
+      await this.#enqueue(latest, entries, fresh);
     } catch (error) {
       if (this.#closed) return;
       const message = error instanceof Error ? error.message : String(error);
@@ -414,6 +485,44 @@ export class MonitorRuntime {
       delivered: (this.#state.get(monitor.monitorId)?.delivered ?? 0) + delivered,
       lastError: null,
     });
+  }
+
+  /**
+   * Record what a round rejected, so the settings page can explain a silence.
+   *
+   * Only the totals and the newest rejection are kept: the question this
+   * answers is "why did nothing arrive?", and storing every skipped message
+   * would grow without bound on a busy chat.
+   */
+  #recordSkips(monitorId, skipped, read) {
+    // The newest rejection, not the last one processed: the filters run in
+    // stages, so "last pushed" is whichever stage happened to sit furthest
+    // down the pipeline rather than what the chat said most recently.
+    let last = skipped[0];
+    let lastTime = messageTimeMs(last.message) ?? -Infinity;
+    for (const entry of skipped) {
+      const time = messageTimeMs(entry.message) ?? -Infinity;
+      if (time >= lastTime) {
+        last = entry;
+        lastTime = time;
+      }
+    }
+    const time = messageTimeMs(last.message);
+    this.#setState(monitorId, {
+      skipped: (this.#state.get(monitorId)?.skipped ?? 0) + skipped.length,
+      lastSkip: {
+        at: time ?? this.#now(),
+        reason: last.reason,
+        messageId: typeof last.message?.message_id === 'string' ? last.message.message_id : '',
+        sender: senderLabel(last.message),
+      },
+    });
+    const counts = {};
+    for (const entry of skipped) counts[entry.reason] = (counts[entry.reason] ?? 0) + 1;
+    this.#logger.debug?.(
+      `[lark-session-monitor] ${monitorId}: read=${read} skipped=`
+      + Object.entries(counts).map(([reason, count]) => `${reason}:${count}`).join(','),
+    );
   }
 
   async #advance(monitor, message) {

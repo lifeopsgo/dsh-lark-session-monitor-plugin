@@ -203,11 +203,12 @@ export class LarkUserClient {
   }
 
   /**
-   * The signed-in user's own identity, used to recognize self-sent messages.
+   * The authorized user's own identity, so a monitor can recognize messages
+   * that address them.
    *
    * The endpoint needs no scope beyond a valid user token. `user_id` is a
-   * sensitive field and may come back empty, which is fine: open_id is what
-   * the message reads carry.
+   * sensitive field and may come back empty, which is fine: message reads
+   * carry `open_id`.
    */
   async userInfo({ signal } = {}) {
     const data = await this.#request('/open-apis/authen/v1/user_info', { signal });

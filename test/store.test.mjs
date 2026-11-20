@@ -286,29 +286,69 @@ test('only a literal true enables pinning', async () => {
   assert.equal(created.autoCreateAndPin, false);
 });
 
-test('skipOwnMessages defaults off and survives a round trip', async () => {
+test('skipBotMessages defaults off and survives a round trip', async () => {
   const { store } = await openStore();
   const plain = await store.upsertMonitor({ chatId: 'oc_a', prompt: 'p' });
-  assert.equal(plain.skipOwnMessages, false);
+  assert.equal(plain.skipBotMessages, false);
 
   const skipping = await store.upsertMonitor({
-    chatId: 'oc_b', prompt: 'p', skipOwnMessages: true,
+    chatId: 'oc_b', prompt: 'p', skipBotMessages: true,
   });
-  assert.equal(skipping.skipOwnMessages, true);
+  assert.equal(skipping.skipBotMessages, true);
 
   // The public view carries it, or the editor cannot show the current mode.
   const view = publicSettings(store.snapshot()).monitors
     .find((m) => m.monitorId === skipping.monitorId);
-  assert.equal(view.skipOwnMessages, true);
+  assert.equal(view.skipBotMessages, true);
 });
 
-test('only a literal true skips own messages', async () => {
+test('only a literal true filters the bot\'s messages', async () => {
   const { store } = await openStore();
   // A hand-edited or stringly value must not silently turn the filter on.
   const created = await store.upsertMonitor({
-    chatId: 'oc_a', prompt: 'p', skipOwnMessages: 'yes',
+    chatId: 'oc_a', prompt: 'p', skipBotMessages: 'yes',
   });
-  assert.equal(created.skipOwnMessages, false);
+  assert.equal(created.skipBotMessages, false);
+});
+
+test('a monitor saved before 2.5.0 keeps its switch through the rename', async () => {
+  const { store } = await openStore();
+  // The 2.4.0 settings page posts skipOwnMessages and never sends the new key.
+  const created = await store.upsertMonitor({
+    chatId: 'oc_a', prompt: 'p', skipOwnMessages: true,
+  });
+  assert.equal(created.skipBotMessages, true);
+});
+
+test('alsoOperatorMention defaults off and survives a round trip', async () => {
+  const { store } = await openStore();
+  const plain = await store.upsertMonitor({ chatId: 'oc_a', prompt: 'p' });
+  assert.equal(plain.alsoOperatorMention, false);
+
+  const asking = await store.upsertMonitor({
+    chatId: 'oc_b', prompt: 'p', alsoOperatorMention: true,
+  });
+  assert.equal(asking.alsoOperatorMention, true);
+
+  const view = publicSettings(store.snapshot()).monitors
+    .find((m) => m.monitorId === asking.monitorId);
+  assert.equal(view.alsoOperatorMention, true);
+});
+
+test('the operator open_id is stored once and never erased by a later save', async () => {
+  const { store } = await openStore();
+  assert.equal(publicSettings(store.snapshot()).app.userOpenId, '');
+
+  assert.equal(await store.saveUserOpenId('ou_me'), 'ou_me');
+  assert.equal(publicSettings(store.snapshot()).app.userOpenId, 'ou_me');
+
+  // An empty value must not clear what was already learned.
+  await store.saveUserOpenId('');
+  assert.equal(publicSettings(store.snapshot()).app.userOpenId, 'ou_me');
+
+  // A regular app save keeps it too.
+  await store.saveApp({ pollIntervalMs: 10_000 });
+  assert.equal(publicSettings(store.snapshot()).app.userOpenId, 'ou_me');
 });
 
 test('onlySenderIds keeps unique, non-empty ids and drops everything else', async () => {

@@ -172,6 +172,26 @@ const UNRENDERABLE_LABELS = Object.freeze({
 });
 
 /**
+ * Replace a message's `@_user_N` mention keys with the mentioned names.
+ *
+ * Text bodies carry placeholders and a sibling `mentions` array carries the
+ * names, so the raw body alone reads as `@_user_1 查一下…` — meaningless to
+ * the session. Unresolvable keys are left as they are rather than dropped.
+ */
+export function resolveMentions(text, mentions) {
+  if (typeof text !== 'string' || !text) return text;
+  let resolved = text;
+  for (const mention of Array.isArray(mentions) ? mentions : []) {
+    if (!isRecord(mention)) continue;
+    const key = typeof mention.key === 'string' ? mention.key : '';
+    const name = typeof mention.name === 'string' ? mention.name.trim() : '';
+    if (!key || !name) continue;
+    resolved = resolved.split(key).join(`@${name}`);
+  }
+  return resolved;
+}
+
+/**
  * Render one message as plain text.
  *
  * @returns `{ text, kind }` where `kind` names what was recognized, or `null`
@@ -181,17 +201,21 @@ const UNRENDERABLE_LABELS = Object.freeze({
 export function renderMessage(message) {
   const msgType = typeof message?.msg_type === 'string' ? message.msg_type : '';
   const content = parseContent(message?.body?.content);
+  const mentions = message?.mentions;
 
   if (msgType === 'text') {
-    const text = typeof content?.text === 'string' ? content.text.trim() : '';
+    const raw = typeof content?.text === 'string' ? content.text.trim() : '';
+    // A text body stores mentions as `@_user_1` placeholders; the prompt must
+    // say who was addressed, not the placeholder.
+    const text = resolveMentions(raw, mentions);
     return text ? { text, kind: 'text' } : null;
   }
 
   if (msgType === 'post') {
     const title = typeof content?.title === 'string' ? content.title.trim() : '';
-    const body = flattenPostElements(
+    const body = resolveMentions(flattenPostElements(
       content?.content ?? content?.elements ?? (Array.isArray(content) ? content : []),
-    ).trim();
+    ), mentions).trim();
     const text = [title, body].filter(Boolean).join('\n');
     return text ? { text, kind: 'post' } : null;
   }
@@ -240,24 +264,21 @@ export function isAppSender(message) {
 }
 
 /**
- * True when the message was sent by the signed-in user themself.
+ * True when the message was sent by the configured app's own bot.
  *
- * The identity and the message's sender each carry any subset of
- * open_id/union_id/user_id; matching on whichever pair both sides expose is
- * enough. Without an identity the answer is "not ours", so the filter fails
- * open — an identity outage must not silently stop delivery.
+ * Feishu reports an app message's sender as the App ID — `sender.id` with
+ * `sender_type: 'app'`, the same `cli_…` value the settings hold — so the
+ * comparison needs no extra lookup. A human's messages are never the bot's,
+ * however the person is identified. Without an App ID the answer is "not
+ * ours": the filter fails open rather than swallowing messages it cannot
+ * classify.
  */
-export function isOwnMessage(message, identity) {
-  if (!identity) return false;
+export function isOwnBotMessage(message, appId) {
+  if (typeof appId !== 'string' || !appId) return false;
+  if (!isAppSender(message)) return false;
   const sender = message?.sender;
-  const sent = [
-    sender?.id,
-    sender?.sender_id?.open_id,
-    sender?.sender_id?.union_id,
-    sender?.sender_id?.user_id,
-  ];
-  const own = [identity.openId, identity.unionId, identity.userId];
-  return sent.some((value) => typeof value === 'string' && value && own.includes(value));
+  const ids = [sender?.id, sender?.sender_id?.app_id, sender?.sender_id?.open_id];
+  return ids.some((value) => typeof value === 'string' && value === appId);
 }
 
 /** Every id the message's sender may be known by. */
@@ -285,15 +306,21 @@ export function isFromSenders(message, senderIdList) {
 /**
  * True when the message @-mentions the given open_id.
  *
- * Text messages carry a `mentions` array (the list reads populate it with
- * the mentioned entity's open_id); post messages embed the id in their `at`
- * nodes. Both spellings are checked.
+ * `mentions` is spelled two ways by the platform. Message reads fill `id`
+ * with the bare open_id and `id_type: 'open_id'`; event payloads and some
+ * endpoints fill `id` with an `{ open_id, union_id, user_id }` object. Both
+ * must match, or the @机器人 switch silently stops working for one read path.
+ * Post messages also embed the mention as an `at` node. Every spelling is
+ * checked; the id is whichever the platform handed over.
  */
 export function mentionsId(message, id) {
   if (typeof id !== 'string' || !id) return false;
   const mentions = Array.isArray(message?.mentions) ? message.mentions : [];
   for (const mention of mentions) {
-    if (isRecord(mention) && mention.id === id) return true;
+    if (!isRecord(mention)) continue;
+    if (mention.id === id) return true;
+    const nested = isRecord(mention.id) ? mention.id : undefined;
+    if (nested && (nested.open_id === id || nested.union_id === id || nested.user_id === id)) return true;
   }
   const content = parseContent(message?.body?.content);
   const elements = content?.content ?? content?.elements ?? (Array.isArray(content) ? content : []);

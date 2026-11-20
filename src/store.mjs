@@ -108,11 +108,19 @@ function normalizeMonitor(input, { existing } = {}) {
      */
     autoCreateAndPin: input.autoCreateAndPin === true,
     /**
-     * `false` (default): messages you sent yourself are delivered like
-     * anyone else's. `true`: they are skipped, so the session receives what
-     * other people say without your own echoes.
+     * `false` (default): every message is delivered.
+     *
+     * `true`: messages sent by this app's own bot are skipped, so the bot's
+     * replies never come back into the session as fresh input. A person's
+     * messages are unaffected — the operator talks to the monitor, the bot
+     * does not.
+     *
+     * Stored as `skipOwnMessages` before 2.5.0, when the switch filtered the
+     * signed-in user's messages instead. The old key is still read so an
+     * existing monitor keeps the switch it was saved with.
      */
-    skipOwnMessages: input.skipOwnMessages === true,
+    skipBotMessages: input.skipBotMessages === true
+      || (input.skipBotMessages === undefined && input.skipOwnMessages === true),
     /**
      * Restrict this monitor to specific senders; an empty list means
      * everyone. Ids round-trip with the picker built from observed
@@ -136,6 +144,14 @@ function normalizeMonitor(input, { existing } = {}) {
      * typed it. An empty list plus this switch means only @bot messages.
      */
     alsoBotMention: input.alsoBotMention === true,
+    /**
+     * `false` (default): only the sender list and @bot decide.
+     *
+     * `true`: a message that @-mentions the authorized user is accepted too,
+     * on the same terms as @bot — the person is asking the operator, and the
+     * point of the monitor is to let the bot answer for them.
+     */
+    alsoOperatorMention: input.alsoOperatorMention === true,
     enabled: input.enabled !== false,
     createdAt: existing?.createdAt ?? Date.now(),
   };
@@ -181,6 +197,12 @@ export function normalizeSettings(input) {
       appId: nonEmptyString(app.appId) ?? '',
       appSecret: nonEmptyString(app.appSecret) ?? '',
       domain: app.domain === 'lark' ? 'lark' : 'feishu',
+      /**
+       * The authorized user's own open_id, learned once from the user token.
+       * Monitors use it to recognize messages that @-mention the operator,
+       * and the settings page shows it so the rule is not a black box.
+       */
+      userOpenId: nonEmptyString(app.userOpenId) ?? '',
     },
     pollIntervalMs: Number.isFinite(source.pollIntervalMs)
       ? Math.max(MIN_POLL_INTERVAL_MS, Math.trunc(source.pollIntervalMs))
@@ -293,6 +315,20 @@ export class MonitorStore {
     await rename(temp, this.#file);
   }
 
+  /**
+   * Remember the authorized user's open_id.
+   *
+   * Called once after the user token resolves, and only when the value
+   * changed: every write touches the cursor-bearing document, and there is
+   * no reason to rewrite it on each poll.
+   */
+  async saveUserOpenId(userOpenId) {
+    const next = nonEmptyString(userOpenId);
+    if (next === undefined || next === this.#settings.app.userOpenId) return this.#settings.app.userOpenId;
+    await this.#write((draft) => { draft.app.userOpenId = next; });
+    return next;
+  }
+
   saveApp({ appId, appSecret, domain, pollIntervalMs }) {
     return this.#write((draft) => {
       if (appId !== undefined) draft.app.appId = nonEmptyString(appId) ?? '';
@@ -400,6 +436,7 @@ export function publicSettings(settings) {
       appId: settings.app.appId,
       domain: settings.app.domain,
       hasSecret: Boolean(settings.app.appSecret),
+      userOpenId: settings.app.userOpenId,
     },
     pollIntervalMs: settings.pollIntervalMs,
     monitors: settings.monitors.map(publicMonitor),
@@ -417,11 +454,12 @@ export function publicMonitor(monitor) {
     sessionId: monitor.sessionId,
     sessionTitle: monitor.sessionTitle,
     autoCreateAndPin: monitor.autoCreateAndPin === true,
-    skipOwnMessages: monitor.skipOwnMessages === true,
+    skipBotMessages: monitor.skipBotMessages === true,
     onlySenderIds: [...(monitor.onlySenderIds ?? [])],
     blockedKeywords: [...(monitor.blockedKeywords ?? [])],
     allowedKeywords: [...(monitor.allowedKeywords ?? [])],
     alsoBotMention: monitor.alsoBotMention === true,
+    alsoOperatorMention: monitor.alsoOperatorMention === true,
     enabled: monitor.enabled !== false,
   };
 }

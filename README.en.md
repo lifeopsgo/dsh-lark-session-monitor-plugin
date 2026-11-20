@@ -74,11 +74,12 @@ Click **新建监听**:
 | **Prompt** | Sent first, with the message text beneath it |
 | **目标工作区** | Where the target session lives |
 | **目标会话** | Leave empty to auto-create; titles load for the workspace you pick and appear one row at a time, and a session without a title shows its sessionId |
-| **Skip own messages** | Off by default; when on, messages you sent yourself are not delivered |
+| **Skip the bot's own messages** | Off by default; when on, messages sent by this app's own bot are not delivered, so its replies never return as new input. Messages from people, the operator included, are unaffected |
 | **Senders** | Empty by default = all senders; pick specific users or bots to receive only their messages. Names come from the chat's member list (`im:chat.members:read`); a member the list does not name shows its open_id |
-| **Also @bot mentions** | Off by default; when on, messages that @-mention this app's bot are delivered even from senders outside the whitelist |
-| **Blocked keywords** | Empty by default; a message whose rendered text contains any listed keyword is not delivered (the cursor still moves past it) |
-| **Allowed keywords** | Empty by default = deliver everything; when set, only messages whose rendered text contains at least one listed keyword are delivered. The blacklist wins when both match |
+| **Also @bot mentions** | Off by default; when on, a message that @-mentions this app's bot is always delivered: neither the sender list nor either keyword list applies |
+| **Also @me mentions** | Off by default; when on, a message that @-mentions the authorized user is delivered on the same terms, so the bot can answer in their place. The user's open_id is read once and stored in settings |
+| **Blocked keywords** | Empty by default; a message whose rendered text contains any listed keyword is not delivered (the cursor still moves past it). Only applies to polled messages that do not @-mention the bot |
+| **Allowed keywords** | Empty by default = deliver everything; when set, only messages whose rendered text contains at least one listed keyword are delivered. The blacklist wins when both match. Only applies to polled messages that do not @-mention the bot |
 | **启用** | Whether this monitor polls |
 
 ## Settings reference
@@ -125,8 +126,14 @@ New messages are delivered as one prompt:
 **Polling.** Polls are single-flight per monitor. At most **10 messages** per prompt; the remainder follows after that delivery. The cursor advances only after a successful delivery, so a failed delivery re-reads its messages.
 **Multi-instance.** Among DSH instances sharing one `$DSH_HOME`, only one polls: a pid-recorded lock file in the plugin's data directory admits a single poller, the other instances log a warning and retry on the poll interval, and a crashed holder is taken over automatically — two instances never deliver the same messages twice.
 
-**Own messages.** A monitor can skip messages you sent yourself; if your identity cannot be read, messages are delivered as before.
+**The bot's own messages.** A monitor can skip messages sent by this app's own bot: its card replies land in the same chat, and without the filter the session reads its own output back as new input. The check uses the App ID the settings already hold — reads report an app sender as `sender.id = cli_…`, so nothing extra is fetched; with no App ID nothing is filtered. A person's messages are unaffected, and an @bot message from anyone, operator included, is still delivered.
 **Source filters.** The sender list narrows a monitor to specific senders (candidates are whoever spoke in the chat recently); the @bot switch widens it back by one case: a message that @-mentions this app's bot is accepted even from a sender outside the list — being addressed is the signal, not who typed it. Leave the list empty with the switch on and only @bot messages arrive; leave both unset and everything is delivered as before. The bot's identity is resolved through the app's own credentials — no extra scope; while it cannot be resolved the round is held: nothing delivered, nothing lost, retried every poll.
+
+**@bot, @me and the keyword lists.** Both lists are rules for the traffic the monitor overhears while polling: the allowed list admits only matching messages, the blocked list drops matching ones. A message that names the bot — or the operator — is not that kind of traffic: it is a direct request, and whoever typed it already decided it matters, so neither list applies. Without that, a capture keyword like 【客户问题】 swallows a manual @bot test: read, cursor advanced, nothing said. To keep a class of messages out entirely, narrow the source list or the chat instead.
+
+**@me.** With this on, a message that @-mentions the authorized user is delivered on the same terms, so the bot answers in their place. The plugin reads `authen/v1/user_info` once with the user token, stores the open_id in settings, and never asks again. If the identity cannot be read, the rule stays inactive and the monitor card says why instead of failing silently.
+
+**Skipped messages.** Each monitor card shows how many messages were skipped and why the newest one was skipped (sent by you, sender not in the source list, no @bot mention, allowed-keyword miss, blocked keyword, nothing readable), with its time. When a poll reads messages but delivers none, that line is the first thing to check.
 
 
 ## Privacy

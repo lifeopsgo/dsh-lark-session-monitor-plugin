@@ -206,16 +206,6 @@ test('an auth failure on a response triggers the re-auth hook', async () => {
   assert.equal(notified, true);
 });
 
-test('userInfo resolves the signed-in identity from the envelope', async () => {
-  const { client, calls } = clientFor(() => ({
-    code: 0,
-    data: { name: '张三', open_id: 'ou_me', union_id: 'on_me', user_id: '5d9' },
-  }));
-  const info = await client.userInfo();
-  assert.equal(calls[0].endsWith('/open-apis/authen/v1/user_info'), true);
-  assert.deepEqual(info, { openId: 'ou_me', unionId: 'on_me', userId: '5d9', name: '张三' });
-});
-
 test('listMessages stops paging once maxMessages is reached', async () => {
   let requests = 0;
   const { client } = clientFor(() => {

@@ -255,6 +255,9 @@ export function apply(ctx, config) {
       // The @机器人 acceptance path needs the app bot's own open_id. See
       // appBotIdentity above; fetched lazily, at most once per process.
       getBotOpenId: async ({ signal }) => (await appBotIdentity(signal))?.openId,
+      // The bot's own messages are identified by the App ID the settings
+      // already hold, so the "skip the bot" switch needs no network call.
+      getAppId: () => store.snapshot().app.appId,
     });
     instance.start();
     runtime.current = instance;
